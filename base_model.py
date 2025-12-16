@@ -1,10 +1,12 @@
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type, Union, overload, Self
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type, Union, overload, Self, ClassVar, Annotated, Literal, Callable
 
 import pydantic
 import httpx
 from functools import cached_property
+
+from pydantic.main import IncEx
 
 import util
 
@@ -12,28 +14,31 @@ if TYPE_CHECKING:
     from .api import XUIClient
 
 class BaseModel(pydantic.BaseModel):
-    ERROR_RETRIES = 5
-    ERROR_RETRY_COOLDOWN = 1
+    ERROR_RETRIES: ClassVar[int] = 5
+    ERROR_RETRY_COOLDOWN: ClassVar[int] = 1
     if TYPE_CHECKING:
-        client: XUIClient
+        client: Annotated[XUIClient, pydantic.Field(exclude=True)]
     else:
-        client: Any
+        client: Annotated[Any, pydantic.Field(exclude=True)]
 
-    class ConfigDict:
-        keep_untouched = (cached_property,)  # type: ignore
+    model_config = pydantic.ConfigDict(ignored_types=(cached_property, ))
+
+    def model_post_init(self, context: Any, /) -> None:
+        print(f"Model {self.__class__}, {self} inititalized")
 
     @classmethod
     def from_list(cls, args: List[Dict[str, Any]],
                   client: "XUIClient"
                   ) -> List[Self]:
-        return [cls(**obj, xui_client=client) for obj in args]
+        return [cls(**obj, client=client) for obj in args]
 
     @classmethod
     async def from_response(
             cls,
             response: httpx.Response,
             client: "XUIClient",
-            expect: list|dict
+            expect: list|dict,
+            auto_retry: bool = True
     ) -> Union[Self, List[Self]]:
         """If you want to make out a list or dict, please pass an example"""
 
@@ -48,3 +53,7 @@ class BaseModel(pydantic.BaseModel):
                 return cls(**obj, client=client)
         else:
             raise ValueError(f"Invalid 3X-UI response, code {valid}")
+
+
+uwu = BaseModel(client="121")
+print(uwu.model_dump_json())

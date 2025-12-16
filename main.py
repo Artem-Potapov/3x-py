@@ -8,8 +8,8 @@ dotenv.load_dotenv("./.env")
 BASE_URL = os.getenv("BASE_URL")
 PORT = os.getenv("PORT")
 BASE_PATH = os.getenv("BASE_PATH")
-XUI_USERNAME = os.getenv("USERNAME")
-XUI_PASSWORD = os.getenv("PASSWORD")
+XUI_USERNAME = os.getenv("XUI_USERNAME")
+XUI_PASSWORD = os.getenv("XUI_PASSWORD")
 
 base_url = f"https://{BASE_URL}:{PORT}/{BASE_PATH}"
 data = {

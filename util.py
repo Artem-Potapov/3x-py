@@ -23,7 +23,7 @@ async def check_xui_response_validity(response: JsonType) -> str:
             obj: JsonType = json_resp["obj"]
             if success:
                 return "OK"
-            if "database is locked" in msg.lower() and not success:
+            if "database" in msg.lower() and "locked" in msg.lower() and not success:
                 logging.log(logging.WARNING, "Database is locked, retrying...")
                 return "DB_LOCKED"
     return "ERROR"
