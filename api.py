@@ -35,14 +35,14 @@ HeaderType = Union[
 class XUIClient:
     _instance = None
 
-    def __init__(self, base_host:str, base_port: int, base_path: str,
+    def __init__(self, base_website:str, base_port: int, base_path: str,
                  *, xui_username: str|None=None, xui_password: str|None=None,
                  two_fac_code: str|None=None, session_duration: int=3600) -> None:
         self.session: AsyncClient | None = None
-        self.base_host: str = base_host
+        self.base_host: str = base_website
         self.base_port: int = base_port
         self.base_path: str = base_path
-        self.base_url: str = f"https://{self.base_host}:{self.base_port}/{self.base_path}"
+        self.base_url: str = f"https://{self.base_host}:{self.base_port}{self.base_path}"
         self.session_start: float|None = None
         self.session_duration: int = session_duration
         self.xui_username: str|None = xui_username
@@ -63,27 +63,29 @@ class XUIClient:
                             **kwargs) -> Response:
         async for attempt in async_range(self.max_retries):
             resp = await self.session.request(method=method, **kwargs)
-            if resp.status_code // 10 != 2: #because it can return either 201 or 202
+            if resp.status_code // 100 != 2: #because it can return either 201 or 202
                 if resp.status_code == 404:
                     now: float = datetime.datetime.now().timestamp()
                     if self.session_start is None or now - self.session_start > self.session_duration:
                         await self.login()
                         continue
                     else:
-                        return Response(12)
-                        #raise RuntimeError("Server returned a 404, and the session should still be valid")
+                        raise RuntimeError("Server returned a 404, and the session should still be valid")
                 else:
-                    return resp
+                    raise RuntimeError(f"Wrong status code: {resp.status_code}")
 
             status = util.check_xui_response_validity(resp)
             if status == "OK":
                 return resp
             elif status == "DB_LOCKED":
                 if attempt + 1 >= self.max_retries:
-                    resp.status_code = 518 # so the error can simply be handled as a "bad request"
-                    return resp
+                    # resp.status_code = 518 # so the error can simply be handled as a "bad request"
+                    # return resp
+                    raise RuntimeError("Too many retries")
                 await asyncio.sleep(self.retry_delay)
                 continue
+            else:
+                return resp
         raise RuntimeError(f"For some reason safe_request didn't exit, dump:\nmethod:\n{method}\n{kwargs}")
 
 
@@ -153,8 +155,9 @@ class XUIClient:
         else:
             raise RuntimeError(f"Error: server returned a status code of {resp.status_code}")
 
-    def connect(self) -> None:
+    def connect(self) -> Self:
         self.session = AsyncClient(base_url=self.base_url)
+        return self
 
     async def disconnect(self) -> None:
         await self.session.aclose()
@@ -166,10 +169,3 @@ class XUIClient:
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         await self.disconnect()
         return
-
-a = XUIClient("12", 12, "23")
-print(a)
-print(a.__dict__)
-b = XUIClient("12", 12, "34")
-print(b)
-print(b.__dict__)
