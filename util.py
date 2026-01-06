@@ -55,6 +55,7 @@ async def check_xui_response_validity(response: JsonType | httpx.Response) -> st
             if "database" in msg.lower() and "locked" in msg.lower() and not success:
                 logging.log(logging.WARNING, "Database is locked, retrying...")
                 return "DB_LOCKED"
+            return "ERROR"
     raise RuntimeError("Validator got something very unexpected (Please don't shove responses with non-20X status codes in here...)")
 
 class DBLockedError(Exception):

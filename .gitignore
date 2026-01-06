@@ -2,6 +2,6 @@
 __pycache__/
 .env
 response_stub.json
-apt.json
+response_stub_inbound.json
 response*
 !response*.py
