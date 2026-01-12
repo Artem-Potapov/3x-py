@@ -19,18 +19,18 @@ def exclude_if_none(field) -> bool:
     return False
 
 class SingleInboundClient(pydantic.BaseModel):
-    id: str #uuid
+    uuid:  Annotated[str, Field(alias="id")] #yes they really did that...
     security: str = ""
     password: str = ""
     flow: Literal["", "xtls-rprx-vision", "xtls-rprx-vision-udp443"]
-    description: Annotated[str, Field(alias="email")]
+    email: Annotated[str, Field(alias="email")]
     limit_ip: Annotated[int, Field(alias="limitIp")] = 20
     limit_gb: Annotated[int, Field(alias="totalGB")] # total flow
-    expiry_time: Annotated[timestamp, Field(alias="expiryTime")]
-    enable: bool
+    expiry_time: Annotated[timestamp, Field(alias="expiryTime")] = 0
+    enable: bool = True
     tg_id: Annotated[Union[int, str], Field(alias="tgId")] = ""
     subscription_id: Annotated[str, Field(alias="subId")]
-    comment: str
+    comment: str = ""
     created_at: Annotated[timestamp, Field(default_factory=(lambda: int(datetime.datetime.now().timestamp())))]
     updated_at: Annotated[timestamp, Field(default_factory=(lambda: int(datetime.datetime.now().timestamp())))]
 

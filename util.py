@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import logging
 import random
 import re
@@ -25,6 +26,10 @@ async def async_range(start, stop=None, step=1):
         yield i
         await asyncio.sleep(0)
 
+def generate_sub_id_from_tg_id(telegram_id: int):
+    "what this really does is just take the base64 of the tg_id"
+    base64.b64encode()
+    return base64.encodebytes(bytes(str(telegram_id).encode("utf-8"))).decode()
 
 def generate_random_email(length: int = 8) -> str:
     s = ""

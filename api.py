@@ -1,17 +1,15 @@
 import asyncio
 import datetime
-import json
-import logging
-import subprocess
 from collections.abc import Sequence, Mapping
-from logging import DEBUG
-from typing import Self, Optional, Dict, Iterable, AsyncIterable, TypeAlias, Type, Union, Any, List, Tuple, Literal
+from typing import Self, Optional, Dict, Iterable, AsyncIterable, Type, Union, Any, List, Tuple, Literal
 
+#import asyncstdlib as asl
 import httpx
 from httpx import Response, AsyncClient
-from requests import session
 
+import endpoints
 import util
+from models import Inbound, SingleInboundClient
 from util import JsonType, async_range
 
 DataType: Type[str|bytes|Iterable[bytes]|AsyncIterable[bytes]] = Union[str, bytes, Iterable[bytes], AsyncIterable[bytes]]
@@ -38,6 +36,7 @@ class XUIClient:
     def __init__(self, base_website:str, base_port: int, base_path: str,
                  *, xui_username: str|None=None, xui_password: str|None=None,
                  two_fac_code: str|None=None, session_duration: int=3600) -> None:
+        self.PROD_STRING = "boykisser"
         self.session: AsyncClient | None = None
         self.base_host: str = base_website
         self.base_port: int = base_port
@@ -50,6 +49,11 @@ class XUIClient:
         self.two_fac_code: str|None = two_fac_code
         self.max_retries: int = 5
         self.retry_delay: int = 1
+        # endpoints
+        self.server = endpoints.Server(self)
+        self.clients = endpoints.Clients(self)
+        self.inbounds = endpoints.Inbounds(self)
+
 
     def __new__(cls, *args, **kwargs):
         print("initializing client")
@@ -155,6 +159,45 @@ class XUIClient:
         else:
             raise RuntimeError(f"Error: server returned a status code of {resp.status_code}")
 
+    # @asl.cached_property
+    # async def production_inbounds(self) -> List[Inbound]:
+    #     inbounds = await self.inbounds.get_all()
+    #     usable_inbounds: list[Inbound] = []
+    #     for inb in inbounds:
+    #         if self.PROD_STRING in inb.remark.lower():
+    #             usable_inbounds.append(inb)
+    #     if len(usable_inbounds) == 0:
+    #         raise RuntimeError("No production inbounds found! Change prod_string!")
+    #
+    #     return usable_inbounds
+
+    async def create_prod_client(self, telegram_id: int, additional_remark: str=None):
+        """
+            for inb in all_needeed_inbounds:
+                inb.add_client(uuid, blahblahblah)
+            """
+
+        production_inbounds: List[Inbound] = []
+        client = SingleInboundClient.model_construct(
+            uuid="12",
+            flow="",
+            email=util.generate_random_email(),
+            limit_gb=0,
+            enable=True,
+            subscription_id="diggus_leniggus",
+            comment="")
+
+        for inb in production_inbounds:
+
+            await self.clients.add_client()
+
+
+    async def update_inbounds(self):
+        while True:
+            print("You're seeing this message because I forgot to remove it in api.update_inbounds() !")
+            await self.production_inbounds.cache_invalidate()
+            await asyncio.sleep(5)
+
     def connect(self) -> Self:
         self.session = AsyncClient(base_url=self.base_url)
         return self
@@ -164,8 +207,12 @@ class XUIClient:
 
     async def __aenter__(self) -> Self:
         self.connect()
+        await asyncio.create_task(self.update_inbounds())
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         await self.disconnect()
         return
+
+
+

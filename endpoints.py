@@ -60,12 +60,14 @@ class Server(BaseEndpoint):
 class Inbounds(BaseEndpoint):
     _url = "/panel/api/inbounds"
 
-    async def get_all(self):
+    async def get_all(self) -> List[Inbound]:
         endpoint = "/list"
+        pass
         # no use for this yet...
 
-    async def get_specific(self, id):
+    async def get_specific(self, id) -> Inbound:
         endpoint = f"/get/{id}"
+        pass
         # no use for this yet...
 
 

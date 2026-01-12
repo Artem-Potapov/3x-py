@@ -11,7 +11,7 @@ from pydantic.main import IncEx
 import util
 
 if TYPE_CHECKING:
-    from .api import XUIClient
+    from api import XUIClient
 
 class BaseModel(pydantic.BaseModel):
     ERROR_RETRIES: ClassVar[int] = 5
