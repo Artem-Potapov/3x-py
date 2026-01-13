@@ -3,14 +3,14 @@ import base64
 import logging
 import random
 import re
-from typing import TypeAlias, Union, Dict, Any, List, overload
+from typing import TypeAlias, Union, Dict, Any, List, overload, Iterable, AsyncIterator
 import httpx
 
 JsonType: TypeAlias = Union[Dict[Any, Any], List[Any]]
 
-
 _RE_CAMEL_TO_SNAKE1 = re.compile("(.)([A-Z][a-z]+)")
 _RE_CAMEL_TO_SNAKE2 = re.compile("([a-z0-9])([A-Z])")
+
 
 def camel_to_snake(name: str) -> str:
     name = re.sub(_RE_CAMEL_TO_SNAKE1, r"\1_\2", name)
@@ -26,10 +26,17 @@ async def async_range(start, stop=None, step=1):
         yield i
         await asyncio.sleep(0)
 
+
+async def aiter_list(iterable: Iterable[Any]) -> AsyncIterator[Any]:
+    for item in iterable:
+        yield item
+
+
 def generate_sub_id_from_tg_id(telegram_id: int):
     "what this really does is just take the base64 of the tg_id"
     base64.b64encode()
     return base64.encodebytes(bytes(str(telegram_id).encode("utf-8"))).decode()
+
 
 def generate_random_email(length: int = 8) -> str:
     s = ""
@@ -61,7 +68,9 @@ async def check_xui_response_validity(response: JsonType | httpx.Response) -> st
                 logging.log(logging.WARNING, "Database is locked, retrying...")
                 return "DB_LOCKED"
             return "ERROR"
-    raise RuntimeError("Validator got something very unexpected (Please don't shove responses with non-20X status codes in here...)")
+    raise RuntimeError(
+        "Validator got something very unexpected (Please don't shove responses with non-20X status codes in here...)")
+
 
 class DBLockedError(Exception):
     def __init__(self, message):

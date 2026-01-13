@@ -108,6 +108,8 @@ class Clients(BaseEndpoint):
                                           settings=models.InboundClients.Settings(clients=[client]))
         elif isinstance(client, models.InboundClients):
             final = client
+            if inbound_id:
+                final.parent_id = inbound_id
         else:
             raise TypeError
         # send request

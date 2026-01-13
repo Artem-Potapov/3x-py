@@ -9,8 +9,8 @@ from httpx import Response, AsyncClient
 
 import endpoints
 import util
-from models import Inbound, SingleInboundClient
-from util import JsonType, async_range
+from models import Inbound, SingleInboundClient, InboundClients
+from util import JsonType, async_range, aiter_list
 
 DataType: Type[str|bytes|Iterable[bytes]|AsyncIterable[bytes]] = Union[str, bytes, Iterable[bytes], AsyncIterable[bytes]]
 PrimitiveData = Optional[Union[str, int, float, bool]]
@@ -83,8 +83,6 @@ class XUIClient:
                 return resp
             elif status == "DB_LOCKED":
                 if attempt + 1 >= self.max_retries:
-                    # resp.status_code = 518 # so the error can simply be handled as a "bad request"
-                    # return resp
                     raise RuntimeError("Too many retries")
                 await asyncio.sleep(self.retry_delay)
                 continue
@@ -171,6 +169,13 @@ class XUIClient:
     #
     #     return usable_inbounds
 
+    async def _create_client(self, client: SingleInboundClient | InboundClients | Dict,
+                             inbound: Inbound|int,
+                            ) -> Response:
+        res = await self.clients.add_client(client, inbound)
+        return res
+
+
     async def create_prod_client(self, telegram_id: int, additional_remark: str=None):
         """
             for inb in all_needeed_inbounds:
@@ -187,9 +192,8 @@ class XUIClient:
             subscription_id="diggus_leniggus",
             comment="")
 
-        for inb in production_inbounds:
-
-            await self.clients.add_client()
+        async for inb in aiter_list(production_inbounds):
+            await self._create_client(client, inb)
 
 
     async def update_inbounds(self):
