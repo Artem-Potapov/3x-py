@@ -1,14 +1,17 @@
+import json
 from linecache import clearcache
-from typing import Generic, Type, Literal, LiteralString, Union, List, Dict
+from typing import Generic, Type, Literal, LiteralString, Union, List, Dict, TYPE_CHECKING
 
+import requests
 from httpx import Response
 from pydantic import ValidationError
 from pydantic.main import ModelT
 
 import models
-from api import XUIClient
 from util import camel_to_snake, JsonType
 from models import Inbound
+
+from api import XUIClient
 
 
 class BaseEndpoint(Generic[ModelT]):
@@ -18,26 +21,23 @@ class BaseEndpoint(Generic[ModelT]):
         self.client = client
 
     async def _get_simple_response(self, caller_endpoint: str) -> JsonType:
-        resp = await self.client.safe_get(f"{self._url}{caller_endpoint}")
+        endpoint_url: str = caller_endpoint
+        if self._url not in caller_endpoint:
+            endpoint_url = f"{self._url}{caller_endpoint}"
+        resp = await self.client.safe_get(endpoint_url)
         if resp.status_code == 200:
-            resp_json = resp.json()["obj"]
-            return resp_json
-        elif resp.status_code == 518:
-            raise RuntimeError("Error: too many retries")
+            resp_json = resp.json()
+            return resp_json["obj"]
         else:
             raise RuntimeError(f"Error: wrong status code {resp.status_code}")
 
 class Server(BaseEndpoint):
-    _url = "/panel/api/server"
+    _url = "panel/api/server"
 
     async def new_uuid(self) -> str:
         endpoint = "/getNewUUID"
         resp_json = await self._get_simple_response(endpoint)
         return resp_json["uuid"]
-
-    async def new_telegram_uuid(self, telegram_id) -> str:
-        zeros = 12 - len(telegram_id)
-        return f"11111111-1111-1111-1111-{zeros*'0'}{telegram_id}"
 
     async def new_x25519(self) -> dict[Literal["privateKey", "publicKey"], str]:
         endpoint = "/getNewX25519Cert"
@@ -58,14 +58,16 @@ class Server(BaseEndpoint):
 
 
 class Inbounds(BaseEndpoint):
-    _url = "/panel/api/inbounds"
+    _url = "panel/api/inbounds"
 
     async def get_all(self) -> List[Inbound]:
         endpoint = "/list"
-        pass
-        # no use for this yet...
+        json = await self._get_simple_response(f"{endpoint}")
+        inbounds = Inbound.from_list(json, client=self.client)
+        return inbounds
 
-    async def get_specific(self, id) -> Inbound:
+
+    async def get_specific_inbound(self, id) -> Inbound:
         endpoint = f"/get/{id}"
         pass
         # no use for this yet...
@@ -74,12 +76,13 @@ class Inbounds(BaseEndpoint):
 
 
 class Clients(BaseEndpoint):
-    _url = "/panel/api/inbounds"
+    _url = "panel/api/inbounds"
     #although it's the same url, they should be differentiated
 
-    async def get_client_with_email(self, email):
+    async def get_client_with_email(self, email) -> models.ClientStats:
         endpoint = f"/getClientTraffics/{email}"
-        #kinda pointless...
+        resp = await self._get_simple_response(endpoint)
+        return models.ClientStats.model_validate_json(str(resp))
 
     async def get_client_with_uuid(self, uuid) -> List[models.ClientStats]:
         endpoint = f"/getClientTrafficsById/{uuid}"
@@ -90,7 +93,7 @@ class Clients(BaseEndpoint):
 
     async def add_client(self, client: models.InboundClients | models.SingleInboundClient | Dict,
                          inbound_id: int|None=None) -> Response:
-        endpoint = f"/inbounds/addClient/"
+        endpoint = f"/addClient"
         if isinstance(client, Dict):
             try:
                 client = str(client)
@@ -99,21 +102,34 @@ class Clients(BaseEndpoint):
                 # if there is in fact an error, I want it to raise
                 tmp = models.SingleInboundClient.model_validate_json(client)
                 if inbound_id:
-                    final = models.InboundClients(parent_id=inbound_id,
+                    final = models.InboundClients(id=inbound_id,
                                                   settings=models.InboundClients.Settings(clients=[tmp]))
                 else:
                     raise ValueError("A single client was provided to be added but no parent inbound id")
         elif isinstance(client, models.SingleInboundClient):
-            final = models.InboundClients(parent_id=inbound_id,
+            final = models.InboundClients(id=inbound_id,
                                           settings=models.InboundClients.Settings(clients=[client]))
         elif isinstance(client, models.InboundClients):
             final = client
         else:
             raise TypeError
         # send request
+        print(type(final))
+        print(final)
         data = final.model_dump(by_alias=True)
+        print(type(data))
+        print(json.dumps(data))
+        print(f"{self._url}{endpoint}")
         resp = await self.client.safe_post(f"{self._url}{endpoint}", data=data)
-        return resp
+
+        #YOU NEED TO PASS SETTINGS AS A STRING, NOT AS A DICT, YOU FUCKING DUMBASS!
+        print(resp)
+        print(resp.json())
+
+        # if not resp.json()["success"]:
+        #     print("Error while creating a client")
+        #     print(resp.json()["msg"])
+        # return resp
 
 
 

@@ -1,13 +1,12 @@
 import asyncio
-import datetime
 from collections.abc import Sequence, Mapping
 from typing import Self, Optional, Dict, Iterable, AsyncIterable, Type, Union, Any, List, Tuple, Literal
 
-#import asyncstdlib as asl
+import asyncstdlib as asl
 import httpx
 from httpx import Response, AsyncClient
+from datetime import datetime, UTC
 
-import endpoints
 import util
 from models import Inbound, SingleInboundClient
 from util import JsonType, async_range
@@ -36,12 +35,13 @@ class XUIClient:
     def __init__(self, base_website:str, base_port: int, base_path: str,
                  *, xui_username: str|None=None, xui_password: str|None=None,
                  two_fac_code: str|None=None, session_duration: int=3600) -> None:
-        self.PROD_STRING = "boykisser"
+        import endpoints
+        self.PROD_STRING = "tester-777"
         self.session: AsyncClient | None = None
         self.base_host: str = base_website
         self.base_port: int = base_port
         self.base_path: str = base_path
-        self.base_url: str = f"https://{self.base_host}:{self.base_port}/{self.base_path}"
+        self.base_url: str = f"https://{self.base_host}:{self.base_port}{self.base_path}"
         self.session_start: float|None = None
         self.session_duration: int = session_duration
         self.xui_username: str|None = xui_username
@@ -65,11 +65,14 @@ class XUIClient:
     async def _safe_request(self,
                             method: Literal["get", "post", "patch", "delete", "put"],
                             **kwargs) -> Response:
+
+        print(f"SAFE REQUEST, {method}, is running to a URL of {kwargs["url"]}")
+        print(str(self.session.base_url) + str(kwargs["url"]))
         async for attempt in async_range(self.max_retries):
             resp = await self.session.request(method=method, **kwargs)
             if resp.status_code // 100 != 2: #because it can return either 201 or 202
                 if resp.status_code == 404:
-                    now: float = datetime.datetime.now().timestamp()
+                    now: float = datetime.now(UTC).timestamp()
                     if self.session_start is None or now - self.session_start > self.session_duration:
                         await self.login()
                         continue
@@ -78,7 +81,7 @@ class XUIClient:
                 else:
                     raise RuntimeError(f"Wrong status code: {resp.status_code}")
 
-            status = util.check_xui_response_validity(resp)
+            status = await util.check_xui_response_validity(resp)
             if status == "OK":
                 return resp
             elif status == "DB_LOCKED":
@@ -103,11 +106,13 @@ class XUIClient:
         if self.session is None:
             raise RuntimeError("Session is not initialized")
 
+
         resp = await self._safe_request(method="get",
                                         url=url,
                                         params=params,
                                         headers=headers,
                                         cookies=cookies)
+
         return resp
 
     async def safe_post(self,
@@ -132,87 +137,86 @@ class XUIClient:
                                         cookies=cookies)
         return resp
 
-    async def login(self, username: str|None = None, password: str|None = None,
-                    two_fac_code: str|None = None) -> None:
-        if self.xui_username and username:
-            self.xui_username = username
-        if self.xui_password and password:
-            self.xui_password = password
-        if self.two_fac_code and two_fac_code:
-            self.two_fac_code = two_fac_code
-
+    async def login(self) -> None:
         payload = {
             "username": self.xui_username,
             "password": self.xui_password,
         }
-        if two_fac_code is not None:
-            payload["twoFactorCode"] = self.two_fac_code
 
+        print(self.session.base_url)
+        print("ANCHOR")
         resp = await self.session.post("/login", data=payload)
-        resp_json = resp.json()
         if resp.status_code == 200:
+            resp_json = resp.json()
             if resp_json["success"]:
-                self.session_start: float = (datetime.datetime.now().timestamp())
+                self.session_start: float = (datetime.now(UTC).timestamp())
                 return
             else:
                 raise ValueError("Error: wrong credentials or failed login")
         else:
             raise RuntimeError(f"Error: server returned a status code of {resp.status_code}")
 
-    # @asl.cached_property
-    # async def production_inbounds(self) -> List[Inbound]:
-    #     inbounds = await self.inbounds.get_all()
-    #     usable_inbounds: list[Inbound] = []
-    #     for inb in inbounds:
-    #         if self.PROD_STRING in inb.remark.lower():
-    #             usable_inbounds.append(inb)
-    #     if len(usable_inbounds) == 0:
-    #         raise RuntimeError("No production inbounds found! Change prod_string!")
-    #
-    #     return usable_inbounds
+    async def get_production_inbounds(self) -> List[Inbound]:
+        inbounds = await self.inbounds.get_all()
+        usable_inbounds: list[Inbound] = []
+        for inb in inbounds:
+            if self.PROD_STRING.lower() in inb.remark.lower():
+                usable_inbounds.append(inb)
+        if len(usable_inbounds) == 0:
+            raise RuntimeError("No production inbounds found! Change prod_string!")
 
-    async def create_prod_client(self, telegram_id: int, additional_remark: str=None):
-        """
-            for inb in all_needeed_inbounds:
-                inb.add_client(uuid, blahblahblah)
-            """
+        return usable_inbounds
 
-        production_inbounds: List[Inbound] = []
-        client = SingleInboundClient.model_construct(
-            uuid="12",
-            flow="",
-            email=util.generate_random_email(),
-            limit_gb=0,
-            enable=True,
-            subscription_id="diggus_leniggus",
-            comment="")
+    async def create_and_add_prod_client(self, telegram_id: int, additional_remark: str=None):
+        production_inbounds: List[Inbound] = await self.get_production_inbounds()
+
 
         for inb in production_inbounds:
-
-            await self.clients.add_client()
-
+            client = SingleInboundClient.model_construct(
+                uuid=util.new_telegram_uuid(telegram_id),
+                flow="",
+                email=util.generate_email_from_tgid_inbid(telegram_id, inb.id),
+                limit_gb=0,
+                enable=True,
+                subscription_id=util.sub_from_tgid(telegram_id),
+                comment=f"{additional_remark}, created at {datetime.now(UTC)}")
+            await self.clients.add_client(client, inb.id)
 
     async def update_inbounds(self):
         while True:
             print("You're seeing this message because I forgot to remove it in api.update_inbounds() !")
-            await self.production_inbounds.cache_invalidate()
-            await asyncio.sleep(5)
+            print("Please change the timer from 5 to 60*60*24!")
+            #self.get_production_inbounds.cache_clear()
+            await asyncio.sleep(100)
+
+    async def cache_inbounds(self):
+        print("You're seeing this message because I forgot to remove it in api.cache_inbounds() !")
+        print("Please change the timer from 5 to 60*60*24!")
+        prod_inbounds = await self.get_production_inbounds()
+        table = {}
+        for inb in prod_inbounds:
+            if not inb.id in table.keys():
+                table[inb.id] = []
+            clientstats = inb.clientStats
+            for stat in clientstats:
+                pass
+                #print(stat)
+
 
     def connect(self) -> Self:
         self.session = AsyncClient(base_url=self.base_url)
-        return self
+        return self 
 
     async def disconnect(self) -> None:
         await self.session.aclose()
 
     async def __aenter__(self) -> Self:
         self.connect()
-        await asyncio.create_task(self.update_inbounds())
+        asyncio.create_task(self.update_inbounds())
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        print("disconnectin'")
         await self.disconnect()
         return
-
-
 

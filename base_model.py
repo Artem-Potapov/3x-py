@@ -6,7 +6,9 @@ import pydantic
 import httpx
 from functools import cached_property
 
+from pydantic import model_validator
 from pydantic.main import IncEx
+from pydantic_core.core_schema import ValidationInfo
 
 import util
 
@@ -17,20 +19,25 @@ class BaseModel(pydantic.BaseModel):
     ERROR_RETRIES: ClassVar[int] = 5
     ERROR_RETRY_COOLDOWN: ClassVar[int] = 1
     if TYPE_CHECKING:
-        client: Annotated[XUIClient, pydantic.Field(exclude=True)]
+        ...#client: Annotated[XUIClient, pydantic.Field(exclude=True)]
     else:
-        client: Annotated[Any, pydantic.Field(exclude=True)]
+        ...#client: Annotated[Any, pydantic.Field(exclude=True)]
 
     model_config = pydantic.ConfigDict(ignored_types=(cached_property, ))
 
     def model_post_init(self, context: Any, /) -> None:
         print(f"Model {self.__class__}, {self} inititalized")
 
+
     @classmethod
     def from_list(cls, args: List[Dict[str, Any]],
                   client: "XUIClient"
                   ) -> List[Self]:
-        return [cls(**obj, client=client) for obj in args]
+        uwu = []
+        for obj in args:
+            tmp = cls(client=client, **obj) #I give up
+            uwu.append(tmp)
+        return uwu
 
     @classmethod
     async def from_response(
@@ -56,4 +63,5 @@ class BaseModel(pydantic.BaseModel):
 
 
 uwu = BaseModel(client="121")
-print(uwu.model_dump_json())
+uwu2 = BaseModel.from_list([{}], client="121")
+print(uwu2[0].model_dump_json())
