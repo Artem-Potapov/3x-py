@@ -1,10 +1,10 @@
-import datetime
 import json
 from pydantic import field_validator, Field, field_serializer
 
 import base_model
 import pydantic
 from types import NoneType
+from datetime import datetime, UTC
 from typing import Union, Optional, TypeAlias, Any, Annotated, Literal, List, Dict
 
 from util import JsonType
@@ -31,8 +31,8 @@ class SingleInboundClient(pydantic.BaseModel):
     tg_id: Annotated[Union[int, str], Field(alias="tgId")] = ""
     subscription_id: Annotated[str, Field(alias="subId")]
     comment: str = ""
-    created_at: Annotated[timestamp, Field(default_factory=(lambda: int(datetime.datetime.now().timestamp())))]
-    updated_at: Annotated[timestamp, Field(default_factory=(lambda: int(datetime.datetime.now().timestamp())))]
+    created_at: Annotated[timestamp, Field(default_factory=(lambda: int(datetime.now(UTC).timestamp())))]
+    updated_at: Annotated[timestamp, Field(default_factory=(lambda: int(datetime.now(UTC).timestamp())))]
 
 class InboundClients(pydantic.BaseModel):
     class Settings(pydantic.BaseModel):
@@ -40,6 +40,10 @@ class InboundClients(pydantic.BaseModel):
 
     parent_id: Annotated[int|None, Field(exclude_if=exclude_if_none, alias="id")] = None
     settings: Settings
+
+    @field_serializer("settings")
+    def stringify_settings(self, value: Settings) -> str:
+        return json.dumps(value.model_dump(by_alias=True), ensure_ascii=False)
 
 
 #class InboundSettings(base_model.BaseModel):
@@ -134,7 +138,7 @@ class Inbound(base_model.BaseModel):
     clientStats: Union[list[ClientStats], None]
     listen: str
     port: int
-    protocol: Literal["vless", "vmess", "trojan", "shadowsocks"]  # note: there are some "deprecated" like wireguard
+    protocol: Literal["vless", "vmess", "trojan", "shadowsocks", "wireguard"]  # note: there are some "deprecated" like wireguard
     settings: Union[json_string, Dict[Any, Any]]  # JSON packed value, stringified
     streamSettings: Union[json_string, Dict[Any, Any]]  # JSON packed value, stringified
     tag: str
@@ -143,13 +147,17 @@ class Inbound(base_model.BaseModel):
     # noinspection PyNestedDecorators
     @field_validator('settings', 'streamSettings', 'sniffing', mode='after')
     @classmethod
-    def parse_json_fields(cls, value: str) -> JsonType:
+    def parse_json_fields(cls, value: str) -> JsonType|Literal[""]:
+        if value == "":
+            return ""
         return json.loads(value)
 
     # noinspection PyNestedDecorators
     @field_serializer("settings", "streamSettings", "sniffing")
     @classmethod
-    def stringify_json_fields(cls, value: Dict):
+    def stringify_json_fields(cls, value: Dict|Literal[""]) -> str:
+        if value == "":
+            return ""
         return json.dumps(value, ensure_ascii=False)
 
 
