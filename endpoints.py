@@ -151,16 +151,16 @@ class Clients(BaseEndpoint):
         return resp
 
     async def update_single_client(self, existing_client: SingleInboundClient, inbound_id: int, /, *,
-                                   security: str|None=None,
-                                   password: str|None=None,
-                                   flow: Literal["", "xtls-rprx-vision", "xtls-rprx-vision-udp443"]|None=None,
-                                   email: str|None=None,
-                                   limit_ip: int|None=None,
-                                   limit_gb: int|None=None,
-                                   expiry_time: models.timestamp|None=None,
-                                   enable: bool|None=None,
-                                   sub_id: str|None=None,
-                                   comment: str|None=None,
+                                   security: str | None = None,
+                                   password: str | None = None,
+                                   flow: Literal["", "xtls-rprx-vision", "xtls-rprx-vision-udp443"] | None = None,
+                                   email: str | None = None,
+                                   limit_ip: int | None = None,
+                                   limit_gb: int | None = None,
+                                   expiry_time: models.timestamp | None = None,
+                                   enable: bool | None = None,
+                                   sub_id: str | None = None,
+                                   comment: str | None = None,
                                    ):
         # Collect only the arguments that were explicitly provided (not None)
         changes = {k: v for k, v in locals().items()
@@ -174,5 +174,12 @@ class Clients(BaseEndpoint):
         resp = await self._request_update_client(updated, inbound_id)
         return resp
 
-a = models.InboundClients.model_validate_json('''{"id": 3, "settings": {"clients": [{ "id": "0213c327-c619-4998-9bb3-adaced38c68b", "flow": "", "email": "chipichipichapachapa", "limitIp": 0, "totalGB": 0, "expiryTime": 0, "enable": true, "tgId": "", "subId": "86xi6py5uwsgokh1", "comment": "", "reset": 0 }, { "id": "02333327-c619-4998-9bb3-adaced38c68b", "flow": "", "email": "chipichdwaadwhapachapa", "limitIp": 0, "totalGB": 0, "expiryTime": 0, "enable": true, "tgId": "", "subId": "86xi6ddduwsgokh1", "comment": "", "reset": 0 }]}}''')
-print(a)
+
+    async def delete_expired_clients(self, inbound_id: int) -> Response:
+        _endpoint = f"delDepletedClients/"
+        resp = await self.client.safe_post(f"{self._url}{_endpoint}{inbound_id}")
+        return resp
+
+# a = models.InboundClients.model_validate_json('''{"id": 3, "settings": {"clients": [{ "id": "0213c327-c619-4998-9bb3-adaced38c68b", "flow": "", "email": "penis", "limitIp": 0, "totalGB": 0, "expiryTime": 0, "enable": true, "tgId": "", "subId": "86xi6py5uwsgokh1", "comment": "", "reset": 0 }, { "id": "02333327-c619-4998-9bb3-adaced38c68b", "flow": "", "email": "chipichdwaadwhapachapa", "limitIp": 0, "totalGB": 0, "expiryTime": 0, "enable": true, "tgId": "", "subId": "86xi6ddduwsgokh1", "comment": "", "reset": 0 }]}}''')
+# print(a)
+# client = a.settings.clients[0]
