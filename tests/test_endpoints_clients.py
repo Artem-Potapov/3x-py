@@ -1,7 +1,7 @@
 """Unit tests for Clients endpoint."""
 import pytest
-from code.api import XUIClient
-from code.models import ClientStats
+from api import XUIClient
+from models import ClientStats
 
 
 class TestClientsEndpoint:

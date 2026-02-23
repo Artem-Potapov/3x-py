@@ -6,10 +6,6 @@ import pydantic
 import httpx
 from functools import cached_property
 
-from pydantic import model_validator
-from pydantic.main import IncEx
-from pydantic_core.core_schema import ValidationInfo
-
 import util
 
 if TYPE_CHECKING:
@@ -28,9 +24,9 @@ class BaseModel(pydantic.BaseModel):
     ERROR_RETRIES: ClassVar[int] = 5
     ERROR_RETRY_COOLDOWN: ClassVar[int] = 1
     if TYPE_CHECKING:
-        ...#client: Annotated[XUIClient, pydantic.Field(exclude=True)]
+        client: Annotated[XUIClient, pydantic.Field(exclude=True)]
     else:
-        ...#client: Annotated[Any, pydantic.Field(exclude=True)]
+        client: Annotated[Any, pydantic.Field(exclude=True)]
 
     model_config = pydantic.ConfigDict(ignored_types=(cached_property, ))
 

@@ -8,7 +8,7 @@ import dotenv, os
 from api import XUIClient
 from models import Inbound, SingleInboundClient
 
-dotenv.load_dotenv("../.env")
+dotenv.load_dotenv("./.env")
 BASE_URL = os.getenv("BASE_URL")
 PORT = int(os.getenv("PORT"))
 BASE_PATH = os.getenv("BASE_PATH")

@@ -1,8 +1,8 @@
 import pytest
 from datetime import datetime, UTC
-from code.api import XUIClient
-from code.models import SingleInboundClient, ClientStats
-from code.util import get_telegram_uuid, sub_from_tgid
+from api import XUIClient
+from models import SingleInboundClient, ClientStats
+from util import get_telegram_uuid, sub_from_tgid
 
 
 class TestClientsEndpoint:

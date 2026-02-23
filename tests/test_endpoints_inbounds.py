@@ -1,7 +1,7 @@
 """Unit tests for Inbounds endpoint."""
 import pytest
-from code.api import XUIClient
-from code.models import Inbound
+from api import XUIClient
+from models import Inbound
 
 
 class TestInboundsEndpoint:

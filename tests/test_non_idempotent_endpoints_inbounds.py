@@ -1,8 +1,8 @@
 import pytest
 import json
 from datetime import datetime, UTC
-from code.api import XUIClient
-from code.models import Inbound
+from api import XUIClient
+from models import Inbound
 
 
 class TestInboundsEndpoint:
@@ -61,7 +61,7 @@ class TestInboundsEndpoint:
         )
 
         # Create the inbound
-        response = await xui_client.inbounds_end.add_inbound(test_inbound)
+        response = await xui_client.inbounds_end.addigga
 
         # Validate response
         assert response.status_code == 200
