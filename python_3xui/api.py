@@ -263,7 +263,7 @@ class XUIClient:
         else:
             raise RuntimeError(f"Error: server returned a status code of {resp.status_code}")
 
-    async def connect(self) -> Self:
+    def connect(self) -> Self:
         """Establish a connection to the 3X-UI panel.
 
         This method creates an async HTTP client session.
@@ -272,8 +272,6 @@ class XUIClient:
             Self: The XUIClient instance.
         """
         self.session = AsyncClient(base_url=self.base_url)
-        await self.login()
-        asyncio.create_task(self.clear_prod_inbound_cache())
         return self
 
     async def disconnect(self) -> None:
@@ -293,7 +291,9 @@ class XUIClient:
         Returns:
             Self: The XUIClient instance.
         """
-        await self.connect()
+        self.connect()
+        await self.login()
+        asyncio.create_task(self.clear_prod_inbound_cache())
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
