@@ -10,7 +10,7 @@ import dotenv
 # Add parent directory to Python path so we can import api module
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from api import XUIClient
+from python_3xui.api import XUIClient
 
 # Load environment variables from parent directory
 env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")

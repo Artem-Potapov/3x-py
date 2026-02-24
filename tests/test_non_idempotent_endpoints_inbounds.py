@@ -1,8 +1,8 @@
 import pytest
 import json
 from datetime import datetime, UTC
-from api import XUIClient
-from models import Inbound
+from python_3xui.api import XUIClient
+from python_3xui.models import Inbound
 
 
 class TestInboundsEndpoint:

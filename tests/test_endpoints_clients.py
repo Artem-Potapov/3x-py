@@ -1,7 +1,7 @@
 """Unit tests for Clients endpoint."""
 import pytest
-from api import XUIClient
-from models import ClientStats
+from python_3xui.api import XUIClient
+from python_3xui.models import ClientStats
 
 
 class TestClientsEndpoint:
