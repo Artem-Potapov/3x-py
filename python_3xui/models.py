@@ -1,13 +1,13 @@
 import json
-from pydantic import field_validator, Field, field_serializer
-
-import base_model
-import pydantic
 from types import NoneType
 from datetime import datetime, UTC
 from typing import Union, Optional, TypeAlias, Any, Annotated, Literal, List, Dict
 
-from util import JsonType
+from pydantic import field_validator, Field, field_serializer
+import pydantic
+
+from . import base_model
+from .util import JsonType
 
 timestamp: TypeAlias = int
 ip_address: TypeAlias = str
@@ -275,11 +275,3 @@ class Inbound(base_model.BaseModel):
         if value == "":
             return ""
         return json.dumps(value, ensure_ascii=False)
-
-
-# file = open("./lalala/tripi.json", "r")
-# a = json.load(file)
-# cl1 = InboundClients.model_validate(a)
-# cl1.parent_id = 4
-# print(cl1.model_dump_json(by_alias=True))
-# file.close()

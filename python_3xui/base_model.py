@@ -6,7 +6,8 @@ import pydantic
 import httpx
 from functools import cached_property
 
-import util
+from . import models
+from . import util
 
 if TYPE_CHECKING:
     from api import XUIClient
@@ -46,7 +47,7 @@ class BaseModel(pydantic.BaseModel):
         Examples:
             inbounds = Inbound.from_list([{"id": 1}, {"id": 2}], client=xui_client)
         """
-        return [cls(client=client, **obj) for obj in args]
+        return [cls(**obj) for obj in args]
 
     @classmethod
     async def from_response(
@@ -90,8 +91,3 @@ class BaseModel(pydantic.BaseModel):
                 return cls(**obj, client=client)
         else:
             raise ValueError(f"Invalid 3X-UI response, code {valid}")
-
-
-uwu = BaseModel(client="121")
-uwu2 = BaseModel.from_list([{}], client="121")
-print(uwu2[0].model_dump_json())

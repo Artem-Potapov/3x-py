@@ -7,9 +7,9 @@ from async_lru import alru_cache
 import asyncio
 import httpx
 
-import util
-from models import Inbound, SingleInboundClient, ClientStats
-from util import JsonType, async_range
+from . import util
+from .models import Inbound, SingleInboundClient, ClientStats
+from .util import JsonType, async_range
 
 DataType: Type[str | bytes | Iterable[bytes] | AsyncIterable[bytes]] = Union[str, bytes, Iterable[bytes], AsyncIterable[bytes]]
 PrimitiveData = Optional[Union[str, int, float, bool]]
@@ -72,7 +72,7 @@ class XUIClient:
             two_fac_code: Two-factor authentication code (if enabled).
             session_duration: Maximum session duration in seconds. Defaults to 3600.
         """
-        import endpoints # look, I know it's bad, but we need to evade cyclical imports
+        from . import endpoints # look, I know it's bad, but we need to evade cyclical imports
         self.PROD_STRING = "tester-777"
         self.session: AsyncClient | None = None
         self.base_host: str = base_website
@@ -135,6 +135,7 @@ class XUIClient:
                 if resp.status_code == 404:
                     now: float = datetime.now(UTC).timestamp()
                     if self.session_start is None or now - self.session_start > self.session_duration:
+                        print("Guys, we're not logged in, fixing that rn")
                         await self.login()
                         continue
                     else:
@@ -250,7 +251,7 @@ class XUIClient:
         }
 
         print(self.session.base_url)
-        print("ANCHOR")
+        print("WE'RE LOGGING IN")
         resp = await self.session.post("/login", data=payload)
         if resp.status_code == 200:
             resp_json = resp.json()
@@ -262,7 +263,7 @@ class XUIClient:
         else:
             raise RuntimeError(f"Error: server returned a status code of {resp.status_code}")
 
-    def connect(self) -> Self:
+    async def connect(self) -> Self:
         """Establish a connection to the 3X-UI panel.
 
         This method creates an async HTTP client session.
@@ -271,6 +272,8 @@ class XUIClient:
             Self: The XUIClient instance.
         """
         self.session = AsyncClient(base_url=self.base_url)
+        await self.login()
+        asyncio.create_task(self.clear_prod_inbound_cache())
         return self
 
     async def disconnect(self) -> None:
@@ -290,8 +293,7 @@ class XUIClient:
         Returns:
             Self: The XUIClient instance.
         """
-        self.connect()
-        asyncio.create_task(self.clear_prod_inbound_cache())
+        await self.connect()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:

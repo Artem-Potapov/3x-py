@@ -14,7 +14,8 @@ import logging
 import random
 import re
 from datetime import UTC, datetime
-from typing import TypeAlias, Union, Dict, Any, List, overload
+from typing import TypeAlias, Union, Dict, Any, List
+
 import httpx
 
 JsonType: TypeAlias = Union[Dict[Any, Any], List[Any]]
@@ -55,10 +56,6 @@ async def async_range(start, stop=None, step=1):
 
     Yields:
         int: The next value in the range sequence.
-
-    Examples:
-        async for i in async_range(5):
-            print(i)  # Prints 0, 1, 2, 3, 4
     """
     if stop:
         range_ = range(start, stop, step)
@@ -78,12 +75,6 @@ def base64_from_string(string: str, omit_trailing_equals: bool = False) -> str:
 
     Returns:
         The base64 encoded string.
-
-    Examples:
-        >>> base64_from_string("hello")
-        'aGVsbG8='
-        >>> base64_from_string("hello", omit_trailing_equals=True)
-        'aGVsbG8'
     """
     return base64.b64encode(bytes(str(string).encode("utf-8"))).decode()
 
@@ -208,9 +199,9 @@ async def check_xui_response_validity(response: JsonType | httpx.Response) -> st
         RuntimeError: If the response doesn't match the expected 3X-UI format.
 
     Examples:
-        >>> await check_xui_response_validity({"success": True, "msg": "", "obj": {}})
+        >>> check_xui_response_validity({"success": True, "msg": "", "obj": {}})
         'OK'
-        >>> await check_xui_response_validity({"success": False, "msg": "database is locked", "obj": None})
+        >>> check_xui_response_validity({"success": False, "msg": "database is locked", "obj": None})
         'DB_LOCKED'
     """
     if isinstance(response, httpx.Response):

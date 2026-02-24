@@ -5,8 +5,8 @@ import httpx
 import requests
 import dotenv, os
 
-from api import XUIClient
-from models import Inbound, SingleInboundClient
+from python_3xui.api import XUIClient
+from python_3xui.models import Inbound, SingleInboundClient
 
 dotenv.load_dotenv("./.env")
 BASE_URL = os.getenv("BASE_URL")

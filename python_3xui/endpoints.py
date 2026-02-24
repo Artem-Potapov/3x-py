@@ -1,21 +1,15 @@
 import json
-import time
 from datetime import datetime, UTC
-from linecache import clearcache
-from typing import Generic, Type, Literal, LiteralString, Union, List, Dict, TYPE_CHECKING
+from typing import Generic, Literal, List, Dict
 
-import requests
 from httpx import Response
 from pydantic import ValidationError
 from pydantic.main import ModelT
-from dataclasses import replace
 
-import models
-import util
-from util import camel_to_snake, JsonType
-from models import Inbound, SingleInboundClient
-
-from api import XUIClient
+from . import models
+from .api import XUIClient
+from .models import Inbound, SingleInboundClient
+from .util import JsonType
 
 
 class BaseEndpoint(Generic[ModelT]):
@@ -365,7 +359,3 @@ class Clients(BaseEndpoint):
         _endpoint = f"{inbound_id}/delClient/{uuid}"
         resp = await self.client.safe_post(f"{self._url}{_endpoint}")
         return resp
-
-# a = models.InboundClients.model_validate_json('''{"id": 3, "settings": {"clients": [{ "id": "0213c327-c619-4998-9bb3-adaced38c68b", "flow": "", "email": "penis", "limitIp": 0, "totalGB": 0, "expiryTime": 0, "enable": true, "tgId": "", "subId": "86xi6py5uwsgokh1", "comment": "", "reset": 0 }, { "id": "02333327-c619-4998-9bb3-adaced38c68b", "flow": "", "email": "chipichdwaadwhapachapa", "limitIp": 0, "totalGB": 0, "expiryTime": 0, "enable": true, "tgId": "", "subId": "86xi6ddduwsgokh1", "comment": "", "reset": 0 }]}}''')
-# print(a)
-# client = a.settings.clients[0]
