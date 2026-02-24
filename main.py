@@ -2,7 +2,6 @@ import asyncio
 import json
 
 import httpx
-import requests
 import dotenv, os
 
 from python_3xui.api import XUIClient
@@ -28,14 +27,6 @@ data = {
 # print(a.json())
 
 #b = requests.get(f"{base_url}/panel/api/inbounds/list", cookies=cookies)
-
-class ResponseStub(requests.Response):
-    def __init__(self, js):
-        self.js = js
-
-    def json(self):
-        return self.js
-
 
 async def create_client(telegram_id: int):
     """
