@@ -36,8 +36,8 @@ async def create_client(telegram_id: int):
 
 async def main():
     async with XUIClient(BASE_URL, PORT, BASE_PATH,
-                         xui_username=XUI_USERNAME,
-                         xui_password=XUI_PASSWORD) as client:
+                         username=XUI_USERNAME,
+                         password=XUI_PASSWORD) as client:
         await client.create_and_add_prod_client(128124812, "help me")
         await asyncio.sleep(2)
         print("INB CREATED")

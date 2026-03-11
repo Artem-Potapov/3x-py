@@ -1,8 +1,15 @@
+import asyncio
+import time
+
 import pytest
 from datetime import datetime, UTC
+
+from pydantic import ValidationError
+
 from python_3xui.api import XUIClient
 from python_3xui.models import SingleInboundClient, ClientStats
-from python_3xui.util import get_telegram_uuid, sub_from_tgid
+from python_3xui.util import get_uuid_from_tgid, sub_from_tgid, s_to_ms_timestamp, datetime_now_ms, generate_email_from_tgid_inbid, \
+    generate_random_email
 
 
 class TestClientsEndpoint:
@@ -49,8 +56,8 @@ class TestClientsEndpoint:
         assert inbound_id is not None, "Test inbound should be available"
 
         # Generate unique test data
-        timestamp = int(datetime.now(UTC).timestamp())
-        test_uuid = get_telegram_uuid(TestClientsEndpoint.test_telegram_id)
+        timestamp = datetime_now_ms(UTC)
+        test_uuid = get_uuid_from_tgid(TestClientsEndpoint.test_telegram_id)
         test_email = f"testclient_{timestamp}@example.com"
 
         # Create a test client
@@ -61,12 +68,12 @@ class TestClientsEndpoint:
             flow="",
             email=test_email,
             limitIp=20,  # Using alias 'limitIp' for 'limit_ip'
-            totalGB=10,  # Using alias 'totalGB' for 'limit_gb'
-            expiryTime=timestamp + 86400,  # Using alias 'expiryTime' for 'expiry_time'
+            totalGB=10000,  # Using alias 'totalGB' for 'limit_gb'
+            expiryTime=timestamp + 86400*1000,  # Using alias 'expiryTime' for 'expiry_time'
             enable=True,
             tgId="",  # Using alias 'tgId' for 'tg_id'
             subId=sub_from_tgid(TestClientsEndpoint.test_telegram_id),  # Using alias 'subId' for 'subscription_id'
-            comment=f"Test client created at {timestamp}",
+            comment=f"Test client created at {timestamp}, TEST SUITE",
             created_at=timestamp,
             updated_at=timestamp
         )
@@ -111,30 +118,27 @@ class TestClientsEndpoint:
         try:
             client_stats = await xui_client.clients_end.get_client_with_email(email)
             assert client_stats.email == email
-        except Exception as e:
+        except ValidationError as e:
             pytest.skip(f"Test client with email {email} no longer exists: {e}")
 
         # Delete the client by email
+        print(f"Attempting to delete client with email: {email} from inbound: {inbound_id}")
+
         response = await xui_client.clients_end.delete_client_by_email(email, inbound_id)
 
         # Validate response
         assert response.status_code == 200
         response_json = response.json()
         assert response_json["success"] == True
-        assert "Inbound client has been deleted." in response_json["msg"]
+        assert "Client deleted successfully" in response_json["msg"]
 
-        # Verify deletion by trying to get the deleted client
-        # Note: 3x-ui might return an error or null response for deleted client
         try:
             await xui_client.clients_end.get_client_with_email(email)
-            # If we get here, the client still exists
-            print(f"Warning: Client with email {email} might still exist after deletion")
-            # For test purposes, we'll consider this acceptable if it's a timing issue
-        except Exception:
-            # Expected - client should be deleted
-            pass
-
-        print(f"Successfully deleted test client by email: {email}")
+            #if there's no error meaning the client still exists, fail the test
+            await asyncio.sleep(1)  # Wait a moment
+            pytest.fail("The client still exists after deletion attempt")
+        except ValidationError:
+            print(f"Successfully deleted test client by email: {email}")
 
         # Only clear email, keep UUID for next test
         TestClientsEndpoint.created_client_email = None
@@ -148,8 +152,8 @@ class TestClientsEndpoint:
         assert inbound_id is not None, "Test inbound should be available"
 
         # Generate new test data
-        timestamp = int(datetime.now(UTC).timestamp())
-        test_uuid = get_telegram_uuid(TestClientsEndpoint.test_telegram_id + 1)  # Different UUID
+        timestamp = datetime_now_ms(UTC)
+        test_uuid = get_uuid_from_tgid(TestClientsEndpoint.test_telegram_id + 1)  # Different UUID
         test_email = f"testclient_uuid_{timestamp}@example.com"
 
         # Create a new test client
@@ -160,8 +164,8 @@ class TestClientsEndpoint:
             flow="",
             email=test_email,
             limitIp=20,  # Using alias 'limitIp' for 'limit_ip'
-            totalGB=10,  # Using alias 'totalGB' for 'limit_gb'
-            expiryTime=timestamp + 86400,  # Using alias 'expiryTime' for 'expiry_time'
+            totalGB=0,  # Using alias 'totalGB' for 'limit_gb'
+            expiryTime=timestamp + 86400*1000,  # Using alias 'expiryTime' for 'expiry_time'
             enable=True,
             tgId="",  # Using alias 'tgId' for 'tg_id'
             subId=f"test_sub_{timestamp}",  # Using alias 'subId' for 'subscription_id'
@@ -175,6 +179,7 @@ class TestClientsEndpoint:
         assert response.status_code == 200
 
         # Delete the client by UUID
+        print(f"Attempting to delete client with UUID: {test_uuid} from inbound: {inbound_id}")
         response = await xui_client.clients_end.delete_client_by_uuid(test_uuid, inbound_id)
 
         # Validate response
@@ -183,7 +188,12 @@ class TestClientsEndpoint:
         assert response_json["success"] == True
         assert "Inbound client has been deleted." in response_json["msg"]
 
-        print(f"Successfully deleted test client by UUID: {test_uuid}")
+        print(f"The API said it deleted the client: {test_uuid}")
+        check_clients = await xui_client.clients_end.get_client_with_uuid(test_uuid)
+        for client in check_clients:
+            if client.inboundId == inbound_id and client.uuid == test_uuid:
+                pytest.fail("The client still exists after deletion attempt")
+        print("Check complete, client not found as expected")
 
     @pytest.mark.asyncio
     @pytest.mark.dependency(depends=["test_add_client", "test_delete_client_email"])
@@ -193,11 +203,12 @@ class TestClientsEndpoint:
         production_inbounds = await xui_client.get_production_inbounds()
         if not production_inbounds:
             pytest.skip("No production inbounds found for testing")
+        TEST_TELEGRAM_ID = 420
 
         # Generate unique test data
-        timestamp = int(datetime.now(UTC).timestamp())
-        test_uuid = get_telegram_uuid(TestClientsEndpoint.test_telegram_id + 2)  # Different UUID
-        test_email = f"testclient_tgid_{timestamp}@example.com"
+        timestamp = datetime_now_ms(UTC)
+        test_uuid = get_uuid_from_tgid(TEST_TELEGRAM_ID)  # Different UUID
+        test_email = "IF_YOU_SEE_THIS_SOMETHING_IS_WRONG"
 
         # Create a test client
         test_client = SingleInboundClient.model_construct(
@@ -207,8 +218,8 @@ class TestClientsEndpoint:
             flow="",
             email=test_email,
             limitIp=20,  # Using alias 'limitIp' for 'limit_ip'
-            totalGB=10,  # Using alias 'totalGB' for 'limit_gb'
-            expiryTime=timestamp + 86400,  # Using alias 'expiryTime' for 'expiry_time'
+            totalGB=0,  # Using alias 'totalGB' for 'limit_gb'
+            expiryTime=timestamp + 86400 * 1000,  # Using alias 'expiryTime' for 'expiry_time'
             enable=True,
             tgId="",  # Using alias 'tgId' for 'tg_id'
             subId=f"test_tgid_{timestamp}",  # Using alias 'subId' for 'subscription_id'
@@ -220,14 +231,18 @@ class TestClientsEndpoint:
         # Add client to all production inbounds
         added_responses = []
         for inbound in production_inbounds:
-            response = await xui_client.clients_end.add_client(test_client, inbound.id)
+            #same email = exception, so we need to generate a new email for each inbound
+            send_client = test_client.model_copy(
+                update={"email": generate_email_from_tgid_inbid(TEST_TELEGRAM_ID, inbound.id)}
+            )
+            response = await xui_client.clients_end.add_client(send_client, inbound.id)
             assert response.status_code == 200
             added_responses.append(response)
 
         print(f"Added test client with email: {test_email}, UUID: {test_uuid} to {len(production_inbounds)} production inbounds")
 
         # Now delete the client from all production inbounds by Telegram ID
-        responses = await xui_client.delete_client_by_tgid_all_inbounds(TestClientsEndpoint.test_telegram_id + 2)
+        responses = await xui_client.delete_client_by_tgid_all_inbounds(TEST_TELEGRAM_ID)
 
         # Validate responses
         assert len(responses) == len(production_inbounds)
@@ -235,16 +250,17 @@ class TestClientsEndpoint:
             assert response.status_code == 200
             response_json = response.json()
             assert response_json["success"] == True
-            assert "Inbound client has been deleted." in response_json["msg"]
+            assert "Client deleted successfully" in response_json["msg"]
 
         print(f"Successfully deleted test client by Telegram ID from {len(responses)} production inbounds")
 
         # Verify deletion by trying to get the deleted client from each inbound
-        for inbound in production_inbounds:
+        for _ in production_inbounds:
             try:
                 await xui_client.clients_end.get_client_with_email(test_email)
                 # If we get here, the client still exists in at least one inbound
-                print(f"Warning: Client with email {test_email} might still exist in inbound {inbound.id} after deletion")
+                await asyncio.sleep(1)  # Wait a moment in case of timing issues
+                pytest.fail("The client still exists after deletion attempt in at least one inbound")
             except Exception:
                 # Expected - client should be deleted
                 pass

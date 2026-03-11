@@ -283,7 +283,7 @@ class Clients(BaseEndpoint):
                                    email: str | None = None,
                                    limit_ip: int | None = None,
                                    limit_gb: int | None = None,
-                                   expiry_time: models.timestamp | None = None,
+                                   expiry_time: models.timestamp_seconds | None = None,
                                    enable: bool | None = None,
                                    sub_id: str | None = None,
                                    comment: str | None = None,
@@ -342,7 +342,7 @@ class Clients(BaseEndpoint):
         Returns:
             The HTTP response from the API.
         """
-        _endpoint = f"{inbound_id}/delClient/{email}"
+        _endpoint = f"{inbound_id}/delClientByEmail/{email}"
         resp = await self.client.safe_post(f"{self._url}{_endpoint}")
         return resp
 

@@ -47,8 +47,8 @@ class XUIClient:
         base_url: The full base URL for API requests.
         session_start: Timestamp of when the session was created.
         session_duration: Maximum session duration in seconds.
-        xui_username: Username for authentication.
-        xui_password: Password for authentication.
+        username: Username for authentication.
+        password: Password for authentication.
         two_fac_code: Two-factor authentication code (if enabled).
         max_retries: Maximum number of retry attempts for failed requests.
         retry_delay: Delay in seconds between retries.
@@ -59,7 +59,7 @@ class XUIClient:
     _instance = None
 
     def __init__(self, base_website: str, base_port: int, base_path: str,
-                 *, xui_username: str | None = None, xui_password: str | None = None,
+                 *, username: str | None = None, password: str | None = None,
                  two_fac_code: str | None = None, session_duration: int = 3600) -> None:
         """Initialize the XUIClient.
 
@@ -67,8 +67,8 @@ class XUIClient:
             base_website: The server hostname (e.g., "example.com").
             base_port: The server port (e.g., 443).
             base_path: The base path for the API (e.g., "/panel").
-            xui_username: Username for authentication.
-            xui_password: Password for authentication.
+            username: Username for authentication.
+            password: Password for authentication.
             two_fac_code: Two-factor authentication code (if enabled).
             session_duration: Maximum session duration in seconds. Defaults to 3600.
         """
@@ -81,8 +81,8 @@ class XUIClient:
         self.base_url: str = f"https://{self.base_host}:{self.base_port}{self.base_path}"
         self.session_start: float | None = None
         self.session_duration: int = session_duration
-        self.xui_username: str | None = xui_username
-        self.xui_password: str | None = xui_password
+        self.xui_username: str | None = username
+        self.xui_password: str | None = password
         self.two_fac_code: str | None = two_fac_code
         self.max_retries: int = 5
         self.retry_delay: int = 1
@@ -380,7 +380,7 @@ class XUIClient:
             email = util.generate_email_from_tgid_inbid(tgid, inbound_id)
             resp = [await self.clients_end.get_client_with_email(email)]
             return resp
-        uuid = util.get_telegram_uuid(tgid)
+        uuid = util.get_uuid_from_tgid(tgid)
         resp = await self.clients_end.get_client_with_uuid(uuid)
         return resp
 
@@ -404,7 +404,7 @@ class XUIClient:
         responses = []
         for inb in production_inbounds:
             client = SingleInboundClient.model_construct(
-                uuid=util.get_telegram_uuid(telegram_id),
+                uuid=util.get_uuid_from_tgid(telegram_id),
                 flow="",
                 email=util.generate_email_from_tgid_inbid(telegram_id, inb.id),
                 limit_gb=0,

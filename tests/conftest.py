@@ -48,7 +48,7 @@ async def xui_client() -> XUIClient:
     # Reset singleton for clean test state
     XUIClient._instance = None
 
-    client = XUIClient(base_url, port, base_path, xui_username=username, xui_password=password)
+    client = XUIClient(base_url, port, base_path, username=username, password=password)
     client.connect()
 
     # Authenticate
