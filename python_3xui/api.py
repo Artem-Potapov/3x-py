@@ -1,7 +1,9 @@
+import time
 from collections.abc import Sequence, Mapping
 from typing import Self, Optional, Dict, Iterable, AsyncIterable, Type, Union, Any, List, Tuple, Literal
 from datetime import datetime, UTC
 
+import pyotp
 from httpx import Response, AsyncClient
 from async_lru import alru_cache
 import asyncio
@@ -84,13 +86,23 @@ class XUIClient:
         self.session_duration: int = session_duration
         self.xui_username: str | None = username
         self.xui_password: str | None = password
-        self.two_fac_code: str | None = two_fac_code
+        self.two_fac_secret: str | None = two_fac_code
+        self.totp: pyotp.TOTP | None = None
         self.max_retries: int = 5
         self.retry_delay: int = 1
         # endpoints
         self.server_end = endpoints.Server(self)
         self.clients_end = endpoints.Clients(self)
         self.inbounds_end = endpoints.Inbounds(self)
+        #init self.totp
+        if self.two_fac_secret:
+            if self.two_fac_secret.isdigit() and len(self.two_fac_secret) <= 8:
+                print("WARNING: You seem to have entered a 2FA **code**, not a 2FA secret."
+                      "Although entering the secret is dangerous, there is no other way to provide a consistent way"
+                      "for continuous login. This code will only work for this specific login.")
+                self.totp = None
+            else:
+                self.totp = pyotp.TOTP(self.two_fac_secret)
 
     #========================singleton pattern========================
     def __new__(cls, *args, **kwargs):
@@ -250,6 +262,13 @@ class XUIClient:
             "username": self.xui_username,
             "password": self.xui_password,
         }
+        if self.totp:
+            if self.totp.interval - datetime.now().timestamp() % self.totp.interval < 1:
+                await asyncio.sleep(1.1) # just to not submit an invalid code
+            payload["twoFactorCode"] = self.totp.now()
+        else:
+            if self.two_fac_secret:
+                payload["twoFactorCode"] = self.two_fac_secret
 
         print(self.session.base_url)
         print("WE'RE LOGGING IN")
@@ -491,6 +510,7 @@ class XUIClient:
             email = util.generate_email_from_tgid_inbid(telegram_id, inbound.id)
             resp = await self.clients_end.delete_client_by_email(email, inbound.id)
             responses.append(resp)
+        print("Inbound deleted")
 
         return responses
 
