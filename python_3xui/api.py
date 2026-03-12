@@ -1,3 +1,4 @@
+import re
 import time
 from collections.abc import Sequence, Mapping
 from typing import Self, Optional, Dict, Iterable, AsyncIterable, Type, Union, Any, List, Tuple, Literal
@@ -62,7 +63,8 @@ class XUIClient:
 
     def __init__(self, base_website: str, base_port: int, base_path: str,
                  *, username: str | None = None, password: str | None = None,
-                 two_fac_code: str | None = None, session_duration: int = 3600) -> None:
+                 two_fac_code: str | None = None, session_duration: int = 3600,
+                 custom_prod_string: str = "testing") -> None:
         """Initialize the XUIClient.
 
         Args:
@@ -76,7 +78,7 @@ class XUIClient:
         """
         from . import endpoints # look, I know it's bad, but we need to evade cyclical imports
         self.connected: bool = False
-        self.PROD_STRING = "tester-777"
+        self.PROD_STRING = re.compile(custom_prod_string)
         self.session: AsyncClient | None = None
         self.base_host: str = base_website
         self.base_port: int = base_port
@@ -350,7 +352,7 @@ class XUIClient:
         inbounds = await self.inbounds_end.get_all()
         usable_inbounds: list[Inbound] = []
         for inb in inbounds:
-            if self.PROD_STRING.lower() in inb.remark.lower():
+            if self.PROD_STRING.search(inb.remark):
                 usable_inbounds.append(inb)
         if len(usable_inbounds) == 0:
             raise RuntimeError("No production inbounds found! Change prod_string!")
@@ -409,6 +411,7 @@ class XUIClient:
         This method creates a new client with the given Telegram ID and
         adds it to the production inbounds. The client is configured with
         default settings and the additional remark.
+        Note that the sub id is created by util.generate_email_from_tgid_inbid, so use that to retrieve.
 
         Args:
             telegram_id: The Telegram ID of the client.

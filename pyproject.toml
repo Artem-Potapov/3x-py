@@ -1,6 +1,6 @@
 [project]
 name = "Python-3xui"
-version = "0.0.4"
+version = "0.0.6"
 authors = [
   { name="JustMe_001", email="justme001.causation755@passinbox.com" },
 ]
@@ -23,7 +23,8 @@ dependencies = [
     "pydantic ~= 2.12.5, < 3",
     "httpx ~=0.28.1",
     "dotenv ~= 0.9.9",
-    "async_lru ~= 2.2.0"
+    "async_lru ~= 2.2.0",
+    "pyotp ~= 2.9.0"
 ]
 
 
