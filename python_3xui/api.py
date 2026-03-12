@@ -73,6 +73,7 @@ class XUIClient:
             session_duration: Maximum session duration in seconds. Defaults to 3600.
         """
         from . import endpoints # look, I know it's bad, but we need to evade cyclical imports
+        self.connected: bool = False
         self.PROD_STRING = "tester-777"
         self.session: AsyncClient | None = None
         self.base_host: str = base_website
@@ -272,6 +273,7 @@ class XUIClient:
             Self: The XUIClient instance.
         """
         self.session = AsyncClient(base_url=self.base_url)
+        self.connected = True
         return self
 
     async def disconnect(self) -> None:
@@ -279,6 +281,7 @@ class XUIClient:
 
         This method closes the async HTTP client session.
         """
+        self.connected = False
         await self.session.aclose()
 
     async def __aenter__(self) -> Self:
@@ -346,10 +349,7 @@ class XUIClient:
             This method currently runs every 10 seconds. Please change the
             timer from 5 to 60*60*24 in the code.
         """
-        #This is useless for now, but later get_production_inbounds() will be cached,
-        # and this will clear the cache every 24 hours or so, to make sure the client
-        # always has the most up-to-date inbounds list
-        while True:
+        while self.connected:
             print("You're seeing this message because I forgot to remove it in api.update_inbounds() !")
             print("Please change the timer from 5 to 60*60*24!")
             self.get_production_inbounds.cache_clear()
