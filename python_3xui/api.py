@@ -250,8 +250,8 @@ class XUIClient:
             "password": self.xui_password,
         }
         if self.totp:
-            if self.totp.interval - datetime.now().timestamp() % self.totp.interval < 1:
-                await asyncio.sleep(1.1) # just to not submit an invalid code
+            if self.totp.interval - datetime.now().timestamp() % self.totp.interval < 3:
+                await asyncio.sleep(3.1) # just to not submit an invalid code
             payload["twoFactorCode"] = self.totp.now()
         else:
             if self.two_fac_secret:
