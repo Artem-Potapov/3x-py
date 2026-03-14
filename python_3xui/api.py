@@ -1,6 +1,8 @@
+import logging
 import re
 import time
 from collections.abc import Sequence, Mapping
+from logging import DEBUG
 from typing import Self, Optional, Dict, Iterable, AsyncIterable, Type, Union, Any, List, Tuple, Literal
 from datetime import datetime, UTC
 
@@ -105,23 +107,6 @@ class XUIClient:
                 self.totp = None
             else:
                 self.totp = pyotp.TOTP(self.two_fac_secret)
-
-    #========================singleton pattern========================
-    def __new__(cls, *args, **kwargs):
-        """Create or return the singleton instance.
-
-        Args:
-            *args: Positional arguments passed to __init__.
-            **kwargs: Keyword arguments passed to __init__.
-
-        Returns:
-            The singleton XUIClient instance.
-        """
-        print("initializing client")
-        if cls._instance is None:
-            print("nu instance")
-            cls._instance = super(XUIClient, cls).__new__(cls)
-        return cls._instance
 
     #========================request stuffs========================
     async def _safe_request(self,
@@ -293,6 +278,7 @@ class XUIClient:
         Returns:
             Self: The XUIClient instance.
         """
+        logging.log(DEBUG, "Client connected at %(asctime)s with IP/domain %s", self.base_url)
         self.session = AsyncClient(base_url=self.base_url)
         self.connected = True
         return self
