@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import json
 import logging
 
@@ -50,11 +51,10 @@ async def main():
         await client.create_and_add_prod_client(128124812, "help me")
         await asyncio.sleep(2)
         print("INB CREATED")
-        await client.delete_client_by_tgid_all_inbounds(128124812)
+        await client.revoke_client_by_tgid_all_inbounds(128124812)
         while True:
             await asyncio.sleep(1)
             print("epstein")
-
 
 if __name__ == "__main__":
     asyncio.run(main())

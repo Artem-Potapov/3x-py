@@ -14,7 +14,7 @@ import logging
 import random
 import re
 from datetime import UTC, datetime, tzinfo
-from typing import TypeAlias, Union, Dict, Any, List
+from typing import TypeAlias, Union, Dict, Any, List, dataclass_transform
 
 import httpx
 
@@ -180,7 +180,7 @@ def generate_new_subscription(length: int = 16):
     return s
 
 
-async def check_xui_response_validity(response: JsonType | httpx.Response) -> str:
+async def check_xui_response(response: JsonType | httpx.Response) -> str:
     """Validate a 3X-UI API response.
 
     Checks if the response follows the expected 3X-UI API format with
@@ -193,17 +193,18 @@ async def check_xui_response_validity(response: JsonType | httpx.Response) -> st
         str: One of three status strings:
             - "OK": Response is valid and successful.
             - "DB_LOCKED": Database is locked, operation should be retried.
-            - "ERROR": Operation was unsuccessful.
+            - "FAIL": Operation was unsuccessful.
 
     Raises:
         RuntimeError: If the response doesn't match the expected 3X-UI format.
 
     Examples:
-        >>> check_xui_response_validity({"success": True, "msg": "", "obj": {}})
+        >>> check_xui_response({"success": True, "msg": "", "obj": {}})
         'OK'
-        >>> check_xui_response_validity({"success": False, "msg": "database is locked", "obj": None})
+        >>> check_xui_response({"success": False, "msg": "database is locked", "obj": None})
         'DB_LOCKED'
     """
+    #TODO: this is trying to do too much. We'll just check if DB is locked, and then use case-to-case basis to see how they are.
     if isinstance(response, httpx.Response):
         json_resp = response.json()
     else:
@@ -218,10 +219,8 @@ async def check_xui_response_validity(response: JsonType | httpx.Response) -> st
             if "database" in msg.lower() and "locked" in msg.lower() and not success:
                 logging.log(logging.WARNING, "Database is locked, retrying...")
                 return "DB_LOCKED"
-            logging.warning("Unsuccessful operation (status code 200, success = false)! Message: %s", json_resp["msg"])
-            return "ERROR"
+            return "FAIL"
     raise RuntimeError("Validator got something very unexpected (Please don't shove responses with non-20X status codes in here...)")
-
 
 def get_days_until_expiry(expiry_time: int) -> float:
     """Calculate the number of days until a client expires.
@@ -231,16 +230,16 @@ def get_days_until_expiry(expiry_time: int) -> float:
 
     Returns:
         Number of days until expiry. Returns negative value if already expired.
-        Returns a very large number (infinity) if expiry_time is 0 (no expiry).
+        Returns a very 0 if expiry_time is 0 (no expiry).
 
     Examples:
-        >>> get_days_until_expiry(int(datetime.now(UTC).timestamp_seconds()) + 86400)  # 1 day from now
+        >>> get_days_until_expiry(int(datetime.now(UTC).timestamp()) + 86400)  # 1 day from now
         1.0
         >>> get_days_until_expiry(0)  # No expiry
         inf
     """
     if expiry_time == 0:
-        return float('inf')
+        return 0
 
     current_timestamp = datetime.now(UTC).timestamp()
     seconds_remaining = expiry_time - current_timestamp
