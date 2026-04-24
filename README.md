@@ -6,4 +6,5 @@
 <ul>
 <li>Improve create_and_add_prod_client to have an expiry_time</li>
 <li>delete_client_by_tgid_all_inbounds -> revoke_client_by_tgid_all_inbounds</li>
+<li>Change vulnerable requirements</li>
 </ul>
