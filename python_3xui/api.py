@@ -1,3 +1,4 @@
+import json
 import logging
 import re
 import time
@@ -14,7 +15,7 @@ import httpx
 
 from . import util
 from .models import Inbound, SingleInboundClient, ClientStats
-from .util import JsonType, async_range
+from .util import JsonType, async_range, check_xui_response
 
 DataType: Type[str | bytes | Iterable[bytes] | AsyncIterable[bytes]] = Union[str, bytes, Iterable[bytes], AsyncIterable[bytes]]
 PrimitiveData = Optional[Union[str, int, float, bool]]
@@ -78,7 +79,7 @@ class XUIClient:
             two_fac_code: Two-factor authentication code (if enabled).
             session_duration: Maximum session duration in seconds. Defaults to 3600.
         """
-        from . import endpoints # look, I know it's bad, but we need to evade cyclical imports
+        from . import endpoints  # look, I know it's bad, but we need to evade cyclical imports
         self.connected: bool = False
         self.PROD_STRING = re.compile(custom_prod_string)
         self.session: AsyncClient | None = None
@@ -142,19 +143,19 @@ class XUIClient:
                         raise RuntimeError("""Server returned a 404, and the session should still be valid, likely it's a REAL 404""")
                 else:
                     logging.error("Server returned a status code of %s", resp.status_code)
-                    raise RuntimeError(f"Wrong status code: {resp.status_code}")
+                    resp.raise_for_status()
 
-            status = await util.check_xui_response_validity(resp)
+            status = await util.check_xui_response(resp)
             if status == "OK":
                 return resp
             elif status == "DB_LOCKED":
                 if attempt + 1 >= self.max_retries:
-                    # resp.status_code = 518 # so the error can simply be handled as a "bad request"
-                    # return resp
                     raise RuntimeError("Too many retries")
                 await asyncio.sleep(self.retry_delay)
                 continue
             else:
+                logging.error("A %s request was unsuccessful (code 200, but success=false).\nPayload: %s",
+                              method, json.dumps(resp.json()))
                 return resp
         raise RuntimeError(f"For some reason safe_request didn't exit, dump:\nmethod:\n{method}\n{kwargs}")
 
@@ -252,7 +253,7 @@ class XUIClient:
         }
         if self.totp:
             if self.totp.interval - datetime.now().timestamp() % self.totp.interval < 3:
-                await asyncio.sleep(3.1) # just to not submit an invalid code
+                await asyncio.sleep(3.1)  # just to not submit an invalid code
             payload["twoFactorCode"] = self.totp.now()
         else:
             if self.two_fac_secret:
@@ -266,7 +267,7 @@ class XUIClient:
                 self.session_start: float = (datetime.now(UTC).timestamp())
                 return
             else:
-                raise ValueError("Error: wrong credentials or failed login")
+                raise ValueError("Error: wrong credentials (including status code) or failed login.")
         else:
             raise RuntimeError(f"Error: server returned a status code of {resp.status_code}")
 
@@ -317,7 +318,7 @@ class XUIClient:
             exc_val: The exception value, if an exception occurred.
             exc_tb: The exception traceback, if an exception occurred.
         """
-        if exc_type is None:
+        if exc_type is None or exc_type == asyncio.exceptions.CancelledError:
             logging.info("Client is disconnecting at time with IP/Domain %s", self.base_host)
         else:
             logging.warning("Client is disconnecting due to an error (may be unrelated):"
@@ -328,7 +329,7 @@ class XUIClient:
         return
 
     #========================inbound management========================
-    @alru_cache
+    @alru_cache()
     async def get_production_inbounds(self) -> Tuple[Inbound, ...]:
         """Retrieve production inbounds.
 
@@ -364,8 +365,8 @@ class XUIClient:
         """
         while self.connected:
             self.get_production_inbounds.cache_clear()
-            await self.get_production_inbounds() #fill the cache
-            await asyncio.sleep(3600) #update every 1h
+            await self.get_production_inbounds()  #fill the cache
+            await asyncio.sleep(3600)  #update every 1h
 
     #========================clients management========================
     async def get_client_with_tgid(self, tgid: int, inbound_id: int | None = None) -> List[ClientStats]:
@@ -394,7 +395,12 @@ class XUIClient:
         resp = await self.clients_end.get_client_with_uuid(uuid)
         return resp
 
-    async def create_and_add_prod_client(self, telegram_id: int, additional_remark: str = None):
+    async def create_and_add_prod_client(self, telegram_id: int, *,
+                                         additional_remark: str | None = None,
+                                         expiry_time: int=0,
+                                         exist_ok: bool = False
+                                         ) -> list[Response]:
+        #TODO: add exist_ok flag
         """Create and add a production client.
 
         This method creates a new client with the given Telegram ID and
@@ -405,6 +411,8 @@ class XUIClient:
         Args:
             telegram_id: The Telegram ID of the client.
             additional_remark: An optional additional remark for the client.
+            expiry_time: Expiry time in SECONDS as a UNIX timestamp.
+            exist_ok: Don't raise any errors if the client is already there (good if you need a refresh job)
 
         Returns:
             List[Response]: A list of responses from the server for each
@@ -412,20 +420,30 @@ class XUIClient:
         """
         production_inbounds: List[Inbound] = await self.get_production_inbounds()
 
-        responses = []
+        tasks = []
         for inb in production_inbounds:
+            tmp_email = util.generate_email_from_tgid_inbid(telegram_id, inb.id)
             client = SingleInboundClient.model_construct(
                 uuid=util.get_uuid_from_tgid(telegram_id),
                 flow="",
-                email=util.generate_email_from_tgid_inbid(telegram_id, inb.id),
+                email=tmp_email,
                 limit_gb=0,
                 enable=True,
                 subscription_id=util.sub_from_tgid(telegram_id),
-                comment=f"{additional_remark}, created at {datetime.now(UTC)}")
-            responses.append(await self.clients_end.add_client(client, inb.id))
+                comment=f"{additional_remark}, created at {datetime.now(UTC)}",
+                expiry_time=expiry_time * 1000
+            )
+            tasks.append(asyncio.create_task(self.clients_end.add_client(client, inb.id)))
+        responses: list[Response] = await asyncio.gather(*tasks)
+        if exist_ok:
+            return responses
+        for resp in responses:
+            json_resp = resp.json()
+            if "duplicate email" in json_resp["msg"].lower():
+                logging.error("ERROR: Client already exists and exist_ok not set: %s", json_resp["msg"])
         return responses
 
-    async def update_client_by_tgid(self, telegram_id: int, inbound_id: int, /,
+    async def update_client_by_tgid(self, telegram_id: int, inbound_id: int, /, *,
                                     security: str | None = None,
                                     password: str | None = None,
                                     flow: Literal["", "xtls-rprx-vision", "xtls-rprx-vision-udp443"] | None = None,
@@ -434,7 +452,8 @@ class XUIClient:
                                     expiry_time: int | None = None,
                                     enable: bool | None = None,
                                     sub_id: str | None = None,
-                                    comment: str | None = None) -> Response:
+                                    comment: str | None = None,
+                                    verbose: bool=True) -> Response:
         """
         Update a client in a specific inbound by Telegram ID.
 
@@ -456,6 +475,13 @@ class XUIClient:
         """
         email = util.generate_email_from_tgid_inbid(telegram_id, inbound_id)
         existing_client = await self.clients_end.get_client_with_email(email)
+        if verbose:
+            if expiry_time < 1e9:
+                logging.warning("Warning: You're trying to update a client with expiry time %s. "
+                                "You set it to expire before 2001, likely because you provided the DURATION. "
+                                "You need to provide a TIMESTAMP. "
+                                "If you want to disable this message, set verbose=false.",
+                                expiry_time)
 
         resp = await self.clients_end.update_single_client(
             SingleInboundClient.model_validate(existing_client.model_dump()),
@@ -486,7 +512,7 @@ class XUIClient:
         resp = await self.clients_end.delete_client_by_email(email, inbound_id)
         return resp
 
-    async def delete_client_by_tgid_all_inbounds(self, telegram_id: int) -> List[Response]:
+    async def revoke_client_by_tgid_all_inbounds(self, telegram_id: int) -> List[Response]:
         """Delete a client from all production inbounds by Telegram ID.
 
         Args:
@@ -505,4 +531,3 @@ class XUIClient:
         logging.info("Clients of of tgid %s deleted", telegram_id)
 
         return responses
-

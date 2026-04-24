@@ -83,7 +83,7 @@ class BaseModel(pydantic.BaseModel):
             inbounds = await Inbound.from_response(response, client, list)
         """
         json_resp: util.JsonType = response.json()
-        valid = util.check_xui_response_validity(json_resp)
+        valid = util.check_xui_response(json_resp)
         if valid == "OK":
             obj = json_resp["obj"]
             if expect is list:
@@ -91,4 +91,4 @@ class BaseModel(pydantic.BaseModel):
             if expect is dict:
                 return cls(**obj, client=client)
         else:
-            raise ValueError(f"Invalid 3X-UI response, code {valid}")
+            raise ValueError(f"Invalid 3X-UI response, code {valid}. Don't use from_response on failed requests.")

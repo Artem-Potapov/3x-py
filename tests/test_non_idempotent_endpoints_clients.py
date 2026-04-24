@@ -242,7 +242,7 @@ class TestClientsEndpoint:
         print(f"Added test client with email: {test_email}, UUID: {test_uuid} to {len(production_inbounds)} production inbounds")
 
         # Now delete the client from all production inbounds by Telegram ID
-        responses = await xui_client.delete_client_by_tgid_all_inbounds(TEST_TELEGRAM_ID)
+        responses = await xui_client.revoke_client_by_tgid_all_inbounds(TEST_TELEGRAM_ID)
 
         # Validate responses
         assert len(responses) == len(production_inbounds)
