@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from python_3xui.api import XUIClient
 from python_3xui.models import SingleInboundClient, ClientStats
-from python_3xui.util import get_uuid_from_tgid, sub_from_tgid, s_to_ms_timestamp, datetime_now_ms, generate_email_from_tgid_inbid, \
+from python_3xui.util import get_uuid_from_tgid, s_to_ms_timestamp, datetime_now_ms, generate_email_from_tgid_inbid, \
     generate_random_email
 
 
@@ -72,7 +72,7 @@ class TestClientsEndpoint:
             expiryTime=timestamp + 86400*1000,  # Using alias 'expiryTime' for 'expiry_time'
             enable=True,
             tgId="",  # Using alias 'tgId' for 'tg_id'
-            subId=sub_from_tgid(TestClientsEndpoint.test_telegram_id),  # Using alias 'subId' for 'subscription_id'
+            subId=xui_client.sub_gen(TestClientsEndpoint.test_telegram_id),  # Using alias 'subId' for 'subscription_id'
             comment=f"Test client created at {timestamp}, TEST SUITE",
             created_at=timestamp,
             updated_at=timestamp

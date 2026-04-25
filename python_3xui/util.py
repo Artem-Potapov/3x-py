@@ -79,7 +79,7 @@ def base64_from_string(string: str, omit_trailing_equals: bool = False) -> str:
     return base64.b64encode(bytes(str(string).encode("utf-8"))).decode()
 
 
-def sub_from_tgid(telegram_id: int) -> str:
+def default_sub_from_tgid(telegram_id: int) -> str:
     """Generate a subscription ID from a Telegram ID.
 
     Args:

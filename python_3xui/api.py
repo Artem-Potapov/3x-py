@@ -3,8 +3,9 @@ import logging
 import re
 import time
 from collections.abc import Sequence, Mapping
+from inspect import isawaitable
 from logging import DEBUG
-from typing import Self, Optional, Dict, Iterable, AsyncIterable, Type, Union, Any, List, Tuple, Literal
+from typing import Self, Optional, Dict, Iterable, AsyncIterable, Type, Union, Any, List, Tuple, Literal, Callable, Awaitable, Coroutine
 from datetime import datetime, UTC
 
 import pyotp
@@ -67,7 +68,9 @@ class XUIClient:
     def __init__(self, base_website: str, base_port: int, base_path: str,
                  *, username: str | None = None, password: str | None = None,
                  two_fac_code: str | None = None, session_duration: int = 3600,
-                 custom_prod_string: str = "testing") -> None:
+                 custom_prod_string: str = "testing",
+                 custom_sub_generator: Callable[[int], str]|Callable[[int], Awaitable[str]] = util.default_sub_from_tgid
+                 ) -> None:
         """Initialize the XUIClient.
 
         Args:
@@ -95,6 +98,7 @@ class XUIClient:
         self.totp: pyotp.TOTP | None = None
         self.max_retries: int = 5
         self.retry_delay: int = 1
+        self.sub_gen = custom_sub_generator
         # endpoints
         self.server_end = endpoints.Server(self)
         self.clients_end = endpoints.Clients(self)
@@ -421,6 +425,11 @@ class XUIClient:
         production_inbounds: List[Inbound] = await self.get_production_inbounds()
 
         tasks = []
+        custom_sub: str
+        if isawaitable(self.sub_gen(telegram_id)):
+            custom_sub = await self.sub_gen(telegram_id)
+        else:
+            custom_sub = self.sub_gen(telegram_id)
         for inb in production_inbounds:
             tmp_email = util.generate_email_from_tgid_inbid(telegram_id, inb.id)
             client = SingleInboundClient.model_construct(
@@ -429,7 +438,7 @@ class XUIClient:
                 email=tmp_email,
                 limit_gb=0,
                 enable=True,
-                subscription_id=util.sub_from_tgid(telegram_id),
+                subscription_id=custom_sub,
                 comment=f"{additional_remark}, created at {datetime.now(UTC)}",
                 expiry_time=expiry_time * 1000
             )
@@ -460,15 +469,15 @@ class XUIClient:
         Args:
             telegram_id: The Telegram ID of the client
             inbound_id: The ID of the inbound where the client exists
-            security: Client security setting
-            password: Client password
-            flow: VLESS flow type
-            limit_ip: IP connection limit
-            limit_gb: Data limit in GB
-            expiry_time: Client expiry time (UNIX timestamp)
-            enable: Whether the client is enabled
-            sub_id: Subscription ID
-            comment: Client comment/note
+            security: Client security setting (optional)
+            password: Client password (optional)
+            flow: VLESS flow type (optional)
+            limit_ip: IP connection limit (optional)
+            limit_gb: Data limit in GB (optional)
+            expiry_time: Client expiry time (UNIX timestamp) (optional)
+            enable: Whether the client is enabled (optional)
+            sub_id: Subscription ID (optional)
+            comment: Client comment/note (optional)
 
         Returns:
             Response from the API

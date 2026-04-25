@@ -1,6 +1,6 @@
 [project]
 name = "Python-3xui"
-version = "0.0.7"
+version = "0.0.8"
 authors = [
   { name="JustMe_001", email="justme001.causation755@passinbox.com" },
 ]
@@ -56,4 +56,4 @@ exclude = [
 
 
 [[tool.hatch.envs.hatch-test.matrix]]
-python = ["3.12", "3.11"]
+python = ["3.13", "3.12", "3.11"]
