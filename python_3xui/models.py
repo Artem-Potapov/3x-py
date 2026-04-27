@@ -3,7 +3,8 @@ from datetime import datetime, UTC
 from typing import Union, TypeAlias, Any, Annotated, Literal, List, Dict, ClassVar
 
 import pydantic
-from pydantic import field_validator, Field, field_serializer
+from pydantic import field_validator, Field, field_serializer, ConfigDict
+from typing_extensions import TypeVar
 
 from . import base_model
 from .util import JsonType, auto_s_to_ms_timestamp, auto_ms_to_s_timestamp
@@ -11,6 +12,7 @@ from .util import JsonType, auto_s_to_ms_timestamp, auto_ms_to_s_timestamp
 timestamp_seconds: TypeAlias = int
 ip_address: TypeAlias = str
 json_string: TypeAlias = str
+
 
 def exclude_if_none(field) -> bool:
     """Check if a field value is None for exclusion purposes.
@@ -25,7 +27,52 @@ def exclude_if_none(field) -> bool:
         return True
     return False
 
-class SingleInboundClient(pydantic.BaseModel):
+
+_IntNone = TypeVar("_IntNone", bound=int | None)
+
+
+class InboundClientBase(pydantic.BaseModel):
+    # This is only to unify the DTOs
+    # Only used to update clients, so all fields (except the UUID) can be none. Make sure to exclude!
+    TIME_FIELDS: ClassVar[List[str]] = ["expiry_time", "created_at", "updated_at"]
+    uuid: Annotated[str | None, Field(alias="id")] = None  # yes they really did that...
+    security: str | None = None
+    password: str | None = None
+    flow: Literal["", "xtls-rprx-vision", "xtls-rprx-vision-udp443"] | None = None
+    email: str | None = None
+    limit_ip: Annotated[int | None, Field(alias="limitIp")] = None
+    # Interestingly, the API expects this value to be called GB but it's actually bytes.
+    limit_gb: Annotated[int | None, Field(alias="totalGB")] = None  # total flow
+    expiry_time: Annotated[timestamp_seconds | None, Field(alias="expiryTime")] = None
+    enable: bool | None = None
+    tg_id: Annotated[int | str | None, Field(alias="tgId")] = None
+    subscription_id: Annotated[str | None, Field(alias="subId")] = None
+    comment: str | None = None
+    created_at: timestamp_seconds | None = None
+    updated_at: timestamp_seconds | None = None
+
+    def model_post_init(self, context: Any, /) -> None:
+        if type(self) == InboundClientBase:
+            raise NotImplementedError(f"InboundClientBase is not meant for actual use")
+
+    # note that they won't be called on Nones if you set exclude_none=True in model_dump(_json).
+    @field_validator(TIME_FIELDS[0], *TIME_FIELDS[1:], mode="after")
+    @classmethod
+    def ensure_s_timestamp(cls, value: _IntNone) -> _IntNone:
+        return auto_ms_to_s_timestamp(value)
+
+    @field_serializer(TIME_FIELDS[0], *TIME_FIELDS[1:])
+    @classmethod
+    def serialize_ms_timestamp(cls, value: _IntNone) -> _IntNone:
+        return auto_s_to_ms_timestamp(value) if value is not None else None
+
+    @field_serializer("limit_gb")
+    @classmethod
+    def serialize_total_gb(cls, value: _IntNone) -> _IntNone:
+        return value * (1024 ** 3) if value is not None else None
+
+
+class SingleInboundClient(InboundClientBase):
     """Represents a single client within a VLESS/VMess inbound.
 
     This model represents an individual VPN client with all its configuration
@@ -48,14 +95,14 @@ class SingleInboundClient(pydantic.BaseModel):
         updated_at: Timestamp of last client update.
     """
     TIME_FIELDS: ClassVar[List[str]] = ["expiry_time", "created_at", "updated_at"]
-    uuid:  Annotated[str, Field(alias="id")] #yes they really did that...
+    uuid: Annotated[str, Field(alias="id")]  #yes they really did that...
     security: str = ""
     password: str = ""
     flow: Literal["", "xtls-rprx-vision", "xtls-rprx-vision-udp443"]
     email: Annotated[str, Field(alias="email")]
     limit_ip: Annotated[int, Field(alias="limitIp")] = 20
     #Interestingly, the API expects this value to be called GB but it's actually bytes.
-    limit_gb: Annotated[int, Field(alias="totalGB")] # total flow
+    limit_gb: Annotated[int, Field(alias="totalGB")] = 0  # total flow
     expiry_time: Annotated[timestamp_seconds, Field(alias="expiryTime")] = 0
     enable: bool = True
     tg_id: Annotated[Union[int, str], Field(alias="tgId")] = ""
@@ -68,19 +115,10 @@ class SingleInboundClient(pydantic.BaseModel):
         default_factory=(lambda: int(datetime.now(UTC).timestamp())))
     ]
 
-    @classmethod
-    @field_validator(TIME_FIELDS[0], *TIME_FIELDS[1:], mode="after")
-    def ensure_s_timestamp(cls, value: int) -> int:
-        return auto_ms_to_s_timestamp(value)
 
-    @classmethod
-    @field_serializer(TIME_FIELDS[0], *TIME_FIELDS[1:])
-    def serialize_ms_timestamp(cls, value: int) -> int:
-        return auto_s_to_ms_timestamp(value)
-
-    @field_serializer("limit_gb")
-    def serialize_total_gb(self, value: int) -> int:
-        return value * (1024 ** 2)  # Convert GB to bytes for API
+class ClientUpdatePayload(InboundClientBase):
+    #All fields are optional EXCEPT for UUID
+    uuid: Annotated[str, Field(alias="id")]
 
 
 class InboundClients(pydantic.BaseModel):
@@ -100,9 +138,9 @@ class InboundClients(pydantic.BaseModel):
         Attributes:
             clients: List of SingleInboundClient objects.
         """
-        clients: list[SingleInboundClient]
+        clients: list[InboundClientBase]
 
-    parent_id: Annotated[int|None, Field(exclude_if=exclude_if_none, alias="id")] = None
+    parent_id: Annotated[int | None, Field(exclude_if=exclude_if_none, alias="id")] = None
     settings: Settings
 
     @field_serializer("settings")
@@ -111,7 +149,7 @@ class InboundClients(pydantic.BaseModel):
 
         The 3X-UI API expects settings as a JSON string, not an object.
         """
-        return json.dumps(value.model_dump(by_alias=True), ensure_ascii=False)
+        return json.dumps(value.model_dump(by_alias=True, exclude_none=True), ensure_ascii=False)
 
 
 #class InboundSettings(base_model.BaseModel):
@@ -268,7 +306,7 @@ class Inbound(base_model.BaseModel):
     # noinspection PyNestedDecorators
     @field_validator('settings', 'streamSettings', 'sniffing', mode='after')
     @classmethod
-    def parse_json_fields(cls, value: str) -> JsonType|Literal[""]:
+    def parse_json_fields(cls, value: str) -> JsonType | Literal[""]:
         """Parse JSON string fields into dictionaries.
 
         The 3X-UI API returns settings, streamSettings, and sniffing as
@@ -281,7 +319,7 @@ class Inbound(base_model.BaseModel):
     # noinspection PyNestedDecorators
     @field_serializer("settings", "streamSettings", "sniffing")
     @classmethod
-    def stringify_json_fields(cls, value: Dict|Literal[""]) -> str:
+    def stringify_json_fields(cls, value: Dict | Literal[""]) -> str:
         """Serialize dictionary fields back to JSON strings.
 
         When sending data back to the API, these fields must be JSON strings.
