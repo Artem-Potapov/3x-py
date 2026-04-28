@@ -7,9 +7,8 @@ from httpx import Response
 from pydantic import ValidationError
 from pydantic.main import ModelT
 
-from . import models
 from .api import XUIClient
-from .models import Inbound, SingleInboundClient
+from .models import Inbound, SingleInboundClient, ClientUpdatePayload, ClientStats, InboundClients, InboundClientBase, timestamp_seconds
 from .util import JsonType
 
 
@@ -163,7 +162,7 @@ class Clients(BaseEndpoint):
 
     #although it's the same url, they should be differentiated
 
-    async def get_client_with_email(self, email: str) -> models.ClientStats:
+    async def get_client_with_email(self, email: str) -> ClientStats:
         """Retrieve client statistics by email.
 
         Args:
@@ -174,9 +173,9 @@ class Clients(BaseEndpoint):
         """
         endpoint = f"getClientTraffics/{email}"
         resp = await self._simple_get(endpoint)
-        return models.ClientStats.model_validate(resp)
+        return ClientStats.model_validate(resp)
 
-    async def get_client_with_uuid(self, uuid: str) -> List[models.ClientStats]:
+    async def get_client_with_uuid(self, uuid: str) -> List[ClientStats]:
         """Retrieve client statistics by UUID.
 
         Args:
@@ -187,11 +186,11 @@ class Clients(BaseEndpoint):
         """
         endpoint = f"getClientTrafficsById/{uuid}"
         resp = await self._simple_get(endpoint)
-        client_stats = models.ClientStats.from_list(resp, client=self.client)
+        client_stats = ClientStats.from_list(resp, client=self.client)
         return client_stats
 
 
-    async def add_client(self, client: models.InboundClients | models.SingleInboundClient | Dict,
+    async def add_client(self, client: InboundClients | SingleInboundClient | Dict,
                          inbound_id: int | None = None) -> Response:
         """Add a new client to an inbound.
 
@@ -213,20 +212,20 @@ class Clients(BaseEndpoint):
         endpoint = f"addClient"
         if isinstance(client, Dict):
             try:
-                client = str(client)
-                final = models.InboundClients.model_validate_json(client)
+                client = json.dumps(client)
+                final = InboundClients.model_validate_json(client)
             except ValidationError:
-                # if there is in fact an error, I want it to raise
-                tmp = models.SingleInboundClient.model_validate_json(client)
+                # Check the SingleInboundClient now...
+                tmp = SingleInboundClient.model_validate_json(client)
                 if inbound_id:
-                    final = models.InboundClients(id=inbound_id,
-                                                  settings=models.InboundClients.Settings(clients=[tmp]))
+                    final = InboundClients(id=inbound_id,
+                                                  settings=InboundClients.Settings(clients=[tmp]))
                 else:
                     raise ValueError("A single client was provided to be added but no parent inbound id")
-        elif isinstance(client, models.SingleInboundClient):
-            final = models.InboundClients(id=inbound_id,
-                                          settings=models.InboundClients.Settings(clients=[client]))
-        elif isinstance(client, models.InboundClients):
+        elif isinstance(client, SingleInboundClient):
+            final = InboundClients(id=inbound_id,
+                                          settings=InboundClients.Settings(clients=[client]))
+        elif isinstance(client, InboundClients):
             final = client
             if inbound_id:
                 final.parent_id = inbound_id
@@ -238,7 +237,7 @@ class Clients(BaseEndpoint):
         #YOU NEED TO PASS SETTINGS AS A STRING, NOT AS A DICT, YOU FUCKING DUMBASS!
         return resp
 
-    async def _request_update_client(self, client: models.InboundClients | models.SingleInboundClient,
+    async def _request_update_client(self, client: InboundClients|InboundClientBase,
                                      inbound_id: int | None = None,
                                      *, original_uuid: str | None = None) -> Response:
         """Request to update an existing client.
@@ -255,28 +254,22 @@ class Clients(BaseEndpoint):
         Returns:
             The HTTP response from the API.
         """
-        if isinstance(client, models.SingleInboundClient):
-            if inbound_id is None:
-                raise ValueError("Provide a parent inbound ID or pass models.InboundClients")
-            client = models.InboundClients(parent_id=inbound_id,
-                                           settings=models.InboundClients.Settings(clients=[client]))
-        else:
-            if len(client.settings.clients) != 1:
-                raise ValueError(f"You can only update 1 client at a time, instead got {len(client.settings.clients)}")
-
+        if isinstance(client, InboundClientBase):
+            client = InboundClients(id=inbound_id, settings=InboundClients.Settings(clients=[client]))
         _endpoint = f"updateClient/{original_uuid if original_uuid else client.settings.clients[0].uuid}"
-        resp = await self.client.safe_post(f"{self._url}{_endpoint}", json=client.model_dump_json())
-
+        #we have to do this because if we do model.dump() it will return a Settings **OBJECT** which we DON'T want.
+        resp = await self.client.safe_post(f"{self._url}{_endpoint}",
+                                           json=json.loads(client.model_dump_json(exclude_none=True, by_alias=True)))
         return resp
 
-    async def update_single_client(self, existing_client: SingleInboundClient, inbound_id: int, /, *,
+    async def update_single_client(self, inbound_id: int, client_uuid: str, *,
                                    security: str | None = None,
                                    password: str | None = None,
                                    flow: Literal["", "xtls-rprx-vision", "xtls-rprx-vision-udp443"] | None = None,
                                    email: str | None = None,
                                    limit_ip: int | None = None,
                                    limit_gb: int | None = None,
-                                   expiry_time: models.timestamp_seconds | None = None,
+                                   expiry_time: timestamp_seconds | None = None,
                                    enable: bool | None = None,
                                    sub_id: str | None = None,
                                    comment: str | None = None,
@@ -284,7 +277,7 @@ class Clients(BaseEndpoint):
         """Update an existing client's details.
 
         Args:
-            existing_client: The existing client object to update.
+            client_uuid: The UUID of the original client.
             inbound_id: The ID of the inbound the client belongs to.
             security: New security settings (optional).
             password: New password (optional).
@@ -302,13 +295,12 @@ class Clients(BaseEndpoint):
         """
         # Collect only the arguments that were explicitly provided (not None)
         changes = {k: v for k, v in locals().items()
-                   if k != 'self' and k != 'existing_client' and v is not None}
+                   if k not in ("self", "inbound_id", "client_uuid", "changes") and v is not None}
         # Rename sub_id to subscription_id if needed
         if 'sub_id' in changes:
             changes['subscription_id'] = changes.pop('sub_id')
         changes["updated_at"] = int(datetime.now(UTC).timestamp())
-        updated = existing_client.model_copy(update=changes)
-
+        updated = ClientUpdatePayload.model_construct(**changes, id=client_uuid)
         resp = await self._request_update_client(updated, inbound_id)
         return resp
 
