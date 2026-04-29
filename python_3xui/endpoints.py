@@ -8,7 +8,8 @@ from pydantic import ValidationError
 from pydantic.main import ModelT
 
 from .api import XUIClient
-from .models import Inbound, SingleInboundClient, ClientUpdatePayload, ClientStats, InboundClients, InboundClientBase, timestamp_seconds
+from .custom_exceptions import ClientDoesNotExistError
+from .models import Inbound, SingleInboundClient, ClientStats, InboundClients, timestamp_seconds, ClientsSettings
 from .util import JsonType
 
 
@@ -126,22 +127,22 @@ class Inbounds(BaseEndpoint):
             A list of Inbound model instances.
         """
         endpoint = "/list"
-        json = await self._simple_get(f"{endpoint}")
-        inbounds = Inbound.from_list(json, client=self.client)
+        json_resp = await self._simple_get(f"{endpoint}")
+        inbounds = Inbound.from_list(json_resp)
         return inbounds
 
-    async def get_specific_inbound(self, id) -> Inbound:
+    async def get_specific_inbound(self, inbound_id) -> Inbound:
         """Retrieve a specific inbound by ID.
 
         Args:
-            id: The ID of the inbound to retrieve.
+            inbound_id: The ID of the inbound to retrieve.
 
         Returns:
             An Inbound model instance for the specified ID.
         """
-        endpoint = f"/get/{id}"
+        endpoint = f"/get/{inbound_id}"
         json = await self._simple_get(f"{endpoint}")
-        inbound = Inbound(client=self.client, **json)
+        inbound = Inbound(**json)
         return inbound
 
 
@@ -186,9 +187,8 @@ class Clients(BaseEndpoint):
         """
         endpoint = f"getClientTrafficsById/{uuid}"
         resp = await self._simple_get(endpoint)
-        client_stats = ClientStats.from_list(resp, client=self.client)
+        client_stats = ClientStats.from_list(resp)
         return client_stats
-
 
     async def add_client(self, client: InboundClients | SingleInboundClient | Dict,
                          inbound_id: int | None = None) -> Response:
@@ -212,19 +212,18 @@ class Clients(BaseEndpoint):
         endpoint = f"addClient"
         if isinstance(client, Dict):
             try:
-                client = json.dumps(client)
-                final = InboundClients.model_validate_json(client)
+                final = InboundClients.model_validate(client)
             except ValidationError:
                 # Check the SingleInboundClient now...
-                tmp = SingleInboundClient.model_validate_json(client)
+                tmp = SingleInboundClient.model_validate(client)
                 if inbound_id:
                     final = InboundClients(id=inbound_id,
-                                                  settings=InboundClients.Settings(clients=[tmp]))
+                                           settings=ClientsSettings(clients=[tmp]))
                 else:
                     raise ValueError("A single client was provided to be added but no parent inbound id")
         elif isinstance(client, SingleInboundClient):
             final = InboundClients(id=inbound_id,
-                                          settings=InboundClients.Settings(clients=[client]))
+                                   settings=ClientsSettings(clients=[client]))
         elif isinstance(client, InboundClients):
             final = client
             if inbound_id:
@@ -232,35 +231,56 @@ class Clients(BaseEndpoint):
         else:
             raise TypeError
         # send request
-        data = final.model_dump(by_alias=True)
-        resp = await self.client.safe_post(f"{self._url}{endpoint}", data=data)
-        #YOU NEED TO PASS SETTINGS AS A STRING, NOT AS A DICT, YOU FUCKING DUMBASS!
+        data = json.loads(final.model_dump_json(by_alias=True))
+        resp = await self.client.safe_post(f"{self._url}{endpoint}", json=data)
+        #YOU NEED TO PASS SETTINGS AS A STRING, NOT AS A DICT, YOU IDIOT!
         return resp
 
-    async def _request_update_client(self, client: InboundClients|InboundClientBase,
+    async def _request_update_client(self, client: InboundClients | SingleInboundClient,
                                      inbound_id: int | None = None,
                                      *, original_uuid: str | None = None) -> Response:
         """Request to update an existing client.
 
         Args:
             client: The client data to update. Can be:
+                - A ClientUpdatePayload - Recommended (requires inbound_id)
                 - A SingleInboundClient (requires inbound_id)
                 - An InboundClients object (with one client)
             inbound_id: The ID of the inbound the client belongs to.
-                Required if client is a SingleInboundClient.
+                Required if client is a SingleInboundClient or ClientUpdatePayload.
             original_uuid: The original UUID of the client to update.
-                Required if client is a SingleInboundClient.
+                Required if client is a SingleInboundClient or ClientUpdatePayload.
 
         Returns:
             The HTTP response from the API.
         """
-        if isinstance(client, InboundClientBase):
-            client = InboundClients(id=inbound_id, settings=InboundClients.Settings(clients=[client]))
+        if isinstance(client, SingleInboundClient):
+            client = InboundClients(id=inbound_id, settings=ClientsSettings(clients=[client]))
         _endpoint = f"updateClient/{original_uuid if original_uuid else client.settings.clients[0].uuid}"
         #we have to do this because if we do model.dump() it will return a Settings **OBJECT** which we DON'T want.
         resp = await self.client.safe_post(f"{self._url}{_endpoint}",
                                            json=json.loads(client.model_dump_json(exclude_none=True, by_alias=True)))
         return resp
+
+    async def _find_client_in_inbound(self, client_uuid: str, inbound_id: int) -> SingleInboundClient|None:
+        prod_inbs = await self.client.get_production_inbounds() #check production first since they're all cached
+        prod_inb_index = None
+        for i, prod_inb in enumerate(prod_inbs):  # see if inbound is production
+            if inbound_id == prod_inb.id:
+                prod_inb_index = i
+
+        if prod_inb_index is not None:
+            needed_inb: Inbound = prod_inbs[prod_inb_index]
+            for client in needed_inb.settings.clients:
+                if client.uuid == client_uuid:
+                    return client
+            self.client.get_production_inbounds.cache_clear() # this means client is in a prod inbound but it's not refreshed
+
+        inb = await self.client.inbounds_end.get_specific_inbound(inbound_id)
+        for client in inb.settings.clients:
+            if client.uuid == client_uuid:
+                return client
+        return None
 
     async def update_single_client(self, inbound_id: int, client_uuid: str, *,
                                    security: str | None = None,
@@ -273,7 +293,7 @@ class Clients(BaseEndpoint):
                                    enable: bool | None = None,
                                    sub_id: str | None = None,
                                    comment: str | None = None,
-                                   ):
+                                   ) -> Response:
         """Update an existing client's details.
 
         Args:
@@ -299,8 +319,13 @@ class Clients(BaseEndpoint):
         # Rename sub_id to subscription_id if needed
         if 'sub_id' in changes:
             changes['subscription_id'] = changes.pop('sub_id')
+
+        found_inbound = await self._find_client_in_inbound(client_uuid, inbound_id)
+        if not found_inbound:
+            raise ClientDoesNotExistError(f"The target inbound was checked but client {client_uuid} was not found.")
+
         changes["updated_at"] = int(datetime.now(UTC).timestamp())
-        updated = ClientUpdatePayload.model_construct(**changes, id=client_uuid)
+        updated = found_inbound.model_copy(update=changes)
         resp = await self._request_update_client(updated, inbound_id)
         return resp
 
