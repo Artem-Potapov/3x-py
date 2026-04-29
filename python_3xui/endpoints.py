@@ -262,25 +262,6 @@ class Clients(BaseEndpoint):
                                            json=json.loads(client.model_dump_json(exclude_none=True, by_alias=True)))
         return resp
 
-    async def _find_client_in_inbound(self, client_uuid: str, inbound_id: int) -> SingleInboundClient|None:
-        prod_inbs = await self.client.get_production_inbounds() #check production first since they're all cached
-        prod_inb_index = None
-        for i, prod_inb in enumerate(prod_inbs):  # see if inbound is production
-            if inbound_id == prod_inb.id:
-                prod_inb_index = i
-
-        if prod_inb_index is not None:
-            needed_inb: Inbound = prod_inbs[prod_inb_index]
-            for client in needed_inb.settings.clients:
-                if client.uuid == client_uuid:
-                    return client
-            self.client.get_production_inbounds.cache_clear() # this means client is in a prod inbound but it's not refreshed
-
-        inb = await self.client.inbounds_end.get_specific_inbound(inbound_id)
-        for client in inb.settings.clients:
-            if client.uuid == client_uuid:
-                return client
-        return None
 
     async def update_single_client(self, inbound_id: int, client_uuid: str, *,
                                    security: str | None = None,
@@ -320,7 +301,7 @@ class Clients(BaseEndpoint):
         if 'sub_id' in changes:
             changes['subscription_id'] = changes.pop('sub_id')
 
-        found_inbound = await self._find_client_in_inbound(client_uuid, inbound_id)
+        found_inbound = await self.client._find_client_in_inbound(client_uuid, inbound_id)
         if not found_inbound:
             raise ClientDoesNotExistError(f"The target inbound was checked but client {client_uuid} was not found.")
 

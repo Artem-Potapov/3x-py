@@ -1,22 +1,24 @@
+import asyncio
 import json
 import logging
 import re
-import time
+from asyncio import Task
 from collections.abc import Sequence, Mapping
-from inspect import isawaitable
-from logging import DEBUG
-from typing import Self, Optional, Dict, Iterable, AsyncIterable, Type, Union, Any, List, Tuple, Literal, Callable, Awaitable, Coroutine
 from datetime import datetime, UTC
+from inspect import iscoroutinefunction
+from logging import DEBUG
+from typing import Self, Optional, Dict, Iterable, AsyncIterable, Type, Union, Any, List, Tuple, Literal, Callable, Awaitable, overload
 
-import pyotp
-from httpx import Response, AsyncClient
-from async_lru import alru_cache
-import asyncio
 import httpx
+import pyotp
+from async_lru import alru_cache
+from httpx import Response, AsyncClient, Request
+from pydantic import SecretStr
 
+from . import custom_exceptions
 from . import util
 from .models import Inbound, SingleInboundClient, ClientStats
-from .util import JsonType, async_range, check_xui_response
+from .util import JsonType, async_range
 
 DataType: Type[str | bytes | Iterable[bytes] | AsyncIterable[bytes]] = Union[str, bytes, Iterable[bytes], AsyncIterable[bytes]]
 PrimitiveData = Optional[Union[str, int, float, bool]]
@@ -42,9 +44,6 @@ class XUIClient:
     This class provides methods for authenticating with the 3X-UI panel,
     managing sessions, and performing operations on inbounds and clients.
 
-    The client implements a singleton pattern to ensure only one instance
-    exists at a time.
-
     Attributes:
         PROD_STRING: String used to identify production inbounds.
         session: The async HTTP client session.
@@ -63,13 +62,13 @@ class XUIClient:
         clients_end: Clients endpoint handler.
         inbounds_end: Inbounds endpoint handler.
     """
-    _instance = None
 
     def __init__(self, base_website: str, base_port: int, base_path: str,
                  *, username: str | None = None, password: str | None = None,
                  two_fac_code: str | None = None, session_duration: int = 3600,
                  custom_prod_string: str = "testing",
-                 custom_sub_generator: Callable[[int], str]|Callable[[int], Awaitable[str]] = util.default_sub_from_tgid
+                 max_retries: int = 5, retry_delay = 1,
+                 custom_sub_generator: Callable[[int], str]|Callable[[int], Awaitable[str]] = util.default_sub_from_tgid,
                  ) -> None:
         """Initialize the XUIClient.
 
@@ -94,28 +93,43 @@ class XUIClient:
         self.session_duration: int = session_duration
         self.xui_username: str | None = username
         self.xui_password: str | None = password
-        self.two_fac_secret: str | None = two_fac_code
+        self.two_fac_secret: SecretStr | None = SecretStr(two_fac_code) if two_fac_code is not None else None
         self.totp: pyotp.TOTP | None = None
-        self.max_retries: int = 5
-        self.retry_delay: int = 1
+        self.max_retries: int = max_retries
+        self.retry_delay: int = retry_delay
         self.sub_gen = custom_sub_generator
         # endpoints
         self.server_end = endpoints.Server(self)
         self.clients_end = endpoints.Clients(self)
         self.inbounds_end = endpoints.Inbounds(self)
+        # Per-instance cache wrapper. Using a class-level @alru_cache() on the underlying coroutine binds the cache to
+        # the first event loop that touches it (see async_lru._check_loop), which breaks any caller that creates
+        # a new XUIClient on a fresh loop (e.g. each pytest-asyncio test). Building the wrapper here gives every
+        # instance its own cache bound to its own loop.
+        self.get_production_inbounds = alru_cache(maxsize=128)(self._get_production_inbounds_impl)
+        self._cache_cleaner_task: Task|None = None
         #init self.totp
         if self.two_fac_secret:
-            if self.two_fac_secret.isdigit() and len(self.two_fac_secret) <= 8:
+            if len(self.two_fac_secret.get_secret_value()) <= 8:
                 print("WARNING: You seem to have entered a 2FA **code**, not a 2FA secret."
                       "Although entering the secret is dangerous, there is no other way to provide a consistent way"
                       "for continuous login. This code will only work for this specific login.")
                 self.totp = None
             else:
-                self.totp = pyotp.TOTP(self.two_fac_secret)
+                self.totp = pyotp.TOTP(self.two_fac_secret.get_secret_value())
 
     #========================request stuffs========================
+    @overload
+    async def _safe_request(self, *, request_to_send: httpx.Request) -> Response:
+        ...
+
+    @overload
+    async def _safe_request(self, method: Literal["get", "post", "patch", "delete", "put"],
+                            **kwargs) -> Response:
+        ...
+
     async def _safe_request(self,
-                            method: Literal["get", "post", "patch", "delete", "put"],
+                            method: Literal["get", "post", "patch", "delete", "put"]|None=None,
                             **kwargs) -> Response:
         """Execute an HTTP request with automatic retry on database lock.
 
@@ -132,9 +146,23 @@ class XUIClient:
         Raises:
             RuntimeError: If max retries exceeded or session is invalid.
         """
-        logging.debug("Safe request is running to %s%s", str(self.session.base_url), str(kwargs["url"]))
+        if "request_to_send" in kwargs and len(kwargs.keys()) != 1:
+            raise ValueError("It's either a predetermined a request or args to build your own.")
+        if not "request_to_send" in kwargs:
+            if method is None:
+                raise ValueError("If there's no prebuilt request, you must provide a method.")
+
+        #FIXME: make it also extract JSON out of a ready request
+        logging.info("Safe %s is running to %s%s\nJSON Payload: %s",
+                      method, str(self.session.base_url), str(kwargs["url"]) or kwargs["request_to_send"].url,
+                      json.dumps(kwargs["json"]) if "json" in kwargs.keys() else "(no payload)")
         async for attempt in async_range(self.max_retries):
-            resp = await self.session.request(method=method, **kwargs)
+            if "request_to_send" in kwargs:
+                _request: Request = kwargs["request_to_send"]
+                resp = await self.session.send(_request)
+            else:
+                # noinspection PyTypeChecker
+                resp = await self.session.request(method, **kwargs)
             if resp.status_code // 100 != 2:  #because it can return either 201 or 202
                 if resp.status_code == 404:
                     now: float = datetime.now(UTC).timestamp()
@@ -261,7 +289,7 @@ class XUIClient:
             payload["twoFactorCode"] = self.totp.now()
         else:
             if self.two_fac_secret:
-                payload["twoFactorCode"] = self.two_fac_secret
+                payload["twoFactorCode"] = self.two_fac_secret.get_secret_value()
 
         logging.info("Client is logging in with IP/Domain: %s", self.base_host)
         resp = await self.session.post("/login", data=payload)
@@ -293,8 +321,12 @@ class XUIClient:
 
         This method closes the async HTTP client session.
         """
+        if self._cache_cleaner_task is not None:
+            self._cache_cleaner_task.cancel("Panel is exiting.")
         self.connected = False
-        await self.session.aclose()
+
+        if self.session is not None:
+            await self.session.aclose()
 
     async def __aenter__(self) -> Self:
         """Enter the async context manager.
@@ -308,7 +340,9 @@ class XUIClient:
         """
         self.connect()
         await self.login()
-        asyncio.create_task(self.clear_prod_inbound_cache())
+        self._cache_cleaner_task = asyncio.create_task(
+            self.clear_prod_inbound_cache(), name=f"inb_cache_clearer_for_{self.base_url}"
+        )
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
@@ -327,21 +361,22 @@ class XUIClient:
         else:
             logging.warning("Client is disconnecting due to an error (may be unrelated):"
                             "\n%s, with value %s\nStacktrace:%s",
-                            exc_type, exc_val, exc_tb)
+                            exc_type, exc_val, exc_tb, exc_info=exc_tb)
         print(f"Client is disconnecting: {self.base_host}")
         await self.disconnect()
         return
 
     #========================inbound management========================
-    @alru_cache()
-    async def get_production_inbounds(self) -> Tuple[Inbound, ...]:
+    async def _get_production_inbounds_impl(self) -> tuple[Inbound, ...]:
         """Retrieve production inbounds.
 
         This method fetches all inbounds and filters them based on the
-        production string. It is cached for efficiency.
+        production string. It is wrapped in a per-instance ``alru_cache``
+        in ``__init__`` and exposed as ``get_production_inbounds``; do not
+        call this method directly outside of that wrapper.
 
         Returns:
-            List[Inbound]: A list of production inbounds.
+            tuple[Inbound]: A list of production inbounds.
 
         Raises:
             RuntimeError: If no production inbounds are found.
@@ -404,7 +439,6 @@ class XUIClient:
                                          expiry_time: int=0,
                                          exist_ok: bool = False
                                          ) -> list[Response]:
-        #TODO: add exist_ok flag
         """Create and add a production client.
 
         This method creates a new client with the given Telegram ID and
@@ -422,11 +456,11 @@ class XUIClient:
             List[Response]: A list of responses from the server for each
             inbound the client was added to.
         """
-        production_inbounds: List[Inbound] = await self.get_production_inbounds()
+        production_inbounds: tuple[Inbound, ...] = await self.get_production_inbounds()
 
         tasks = []
         custom_sub: str
-        if isawaitable(self.sub_gen(telegram_id)):
+        if iscoroutinefunction(self.sub_gen):
             custom_sub = await self.sub_gen(telegram_id)
         else:
             custom_sub = self.sub_gen(telegram_id)
@@ -450,7 +484,28 @@ class XUIClient:
             json_resp = resp.json()
             if "duplicate email" in json_resp["msg"].lower():
                 logging.error("ERROR: Client already exists and exist_ok not set: %s", json_resp["msg"])
+                raise custom_exceptions.ClientEmailAlreadyExistsError(json_resp["msg"])
         return responses
+
+    async def _find_client_in_inbound(self, client_uuid: str, inbound_id: int) -> SingleInboundClient|None:
+        prod_inbs = await self.get_production_inbounds() #check production first since they're all cached
+        prod_inb_index = None
+        for i, prod_inb in enumerate(prod_inbs):  # see if inbound is production
+            if inbound_id == prod_inb.id:
+                prod_inb_index = i
+
+        if prod_inb_index is not None:
+            needed_inb: Inbound = prod_inbs[prod_inb_index]
+            for client in needed_inb.settings.clients:
+                if client.uuid == client_uuid:
+                    return client
+            self.get_production_inbounds.cache_clear() # this means client is in a prod inbound but it's not refreshed
+
+        inb = await self.inbounds_end.get_specific_inbound(inbound_id)
+        for client in inb.settings.clients:
+            if client.uuid == client_uuid:
+                return client
+        return None
 
     async def update_client_by_tgid(self, telegram_id: int, inbound_id: int, /, *,
                                     security: str | None = None,
@@ -482,10 +537,8 @@ class XUIClient:
         Returns:
             Response from the API
         """
-        email = util.generate_email_from_tgid_inbid(telegram_id, inbound_id)
-        existing_client = await self.clients_end.get_client_with_email(email)
         if verbose:
-            if expiry_time < 1e9:
+            if expiry_time and expiry_time < 1e9:
                 logging.warning("Warning: You're trying to update a client with expiry time %s. "
                                 "You set it to expire before 2001, likely because you provided the DURATION. "
                                 "You need to provide a TIMESTAMP. "
@@ -493,8 +546,7 @@ class XUIClient:
                                 expiry_time)
 
         resp = await self.clients_end.update_single_client(
-            SingleInboundClient.model_validate(existing_client.model_dump()),
-            inbound_id,
+            inbound_id=inbound_id, client_uuid=util.get_uuid_from_tgid(telegram_id),
             security=security,
             password=password,
             flow=flow,
