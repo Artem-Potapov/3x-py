@@ -14,7 +14,7 @@ import logging
 import random
 import re
 from datetime import UTC, datetime, tzinfo
-from typing import TypeAlias, Union, Dict, Any, List, dataclass_transform
+from typing import TypeAlias, Union, Dict, Any, List
 
 import httpx
 
@@ -43,7 +43,7 @@ def camel_to_snake(name: str) -> str:
     return re.sub(_RE_CAMEL_TO_SNAKE2, r"\1_\2", name).lower()
 
 
-async def async_range(start, stop=None, step=1):
+async def async_range(start: int, stop: int|None=None, step: int=1):
     """Async generator that yields values from a range.
 
     This is an async version of the built-in range() function that yields
@@ -124,6 +124,12 @@ def get_uuid_from_tgid(telegram_id: int, fixed: bool = True) -> str:
     return f"{now.year}{mon}{day}-{hr}{mn}-1111-1111-{resid}"
 
 
+def random_string(length: int):
+    s = "".join([random.choice(
+        "1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ") for _ in range(length)
+    ])
+    return s
+
 def generate_random_email(length: int = 8) -> str:
     """Generate a random alphanumeric email identifier.
 
@@ -136,10 +142,7 @@ def generate_random_email(length: int = 8) -> str:
     Examples:
         >>> generate_random_email(8)  # Random output like 'aB3xY9zQ'
     """
-    s = ""
-    for i in range(length):
-        s += random.choice("1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
-    return s
+    return random_string(length)
 
 
 def generate_email_from_tgid_inbid(telegram_id: int, /, inbound_id: int) -> str:
@@ -174,10 +177,7 @@ def generate_new_subscription(length: int = 16):
     Examples:
         >>> generate_new_subscription(16)  # Random output like 'aB3xY9zQmNpL2kJh'
     """
-    s = ""
-    for i in range(length):
-        s += random.choice("1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
-    return s
+    return random_string(length)
 
 
 async def check_xui_response(response: JsonType | httpx.Response) -> str:
@@ -230,13 +230,13 @@ def get_days_until_expiry(expiry_time: int) -> float:
 
     Returns:
         Number of days until expiry. Returns negative value if already expired.
-        Returns a very 0 if expiry_time is 0 (no expiry).
+        Returns a 0 if expiry_time is 0 (no expiry).
 
     Examples:
         >>> get_days_until_expiry(int(datetime.now(UTC).timestamp()) + 86400)  # 1 day from now
         1.0
         >>> get_days_until_expiry(0)  # No expiry
-        inf
+        0
     """
     if expiry_time == 0:
         return 0
@@ -283,6 +283,6 @@ def auto_ms_to_s_timestamp(ms_or_s: int) -> int:
         return ms_to_s_timestamp(ms_or_s)
     return ms_or_s
 
-def datetime_now_ms(tzinfo: tzinfo|None) -> int:
+def datetime_now_ms(tzinfo: tzinfo|None=UTC) -> int:
     """Get the current time as a UNIX timestamp in milliseconds."""
     return int(datetime.now(tzinfo).timestamp()) * 1000
