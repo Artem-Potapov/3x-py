@@ -1,16 +1,20 @@
 import json
 import logging
 from datetime import datetime, UTC
-from typing import Generic, Literal, List, Dict
+from typing import Generic, Literal, List, Dict, TypeVar, TYPE_CHECKING
 
 from httpx import Response
-from pydantic import ValidationError
-from pydantic.main import ModelT
+from pydantic import ValidationError, BaseModel
 
-from .api import XUIClient
+import pydantic
+
+if TYPE_CHECKING:
+    from .api import XUIClient
 from .custom_exceptions import ClientDoesNotExistError
 from .models import Inbound, SingleInboundClient, ClientStats, InboundClients, timestamp_seconds, ClientsSettings
 from .util import JsonType
+
+ModelT = TypeVar("ModelT", bound=BaseModel)
 
 
 class BaseEndpoint(Generic[ModelT]):
@@ -120,7 +124,7 @@ class Inbounds(BaseEndpoint):
     """
     _url = "panel/api/inbounds"
 
-    async def get_all(self) -> List[Inbound]:
+    async def get_all(self) -> list[Inbound]:
         """Retrieve all inbounds from the server.
 
         Returns:
@@ -131,7 +135,7 @@ class Inbounds(BaseEndpoint):
         inbounds = Inbound.from_list(json_resp)
         return inbounds
 
-    async def get_specific_inbound(self, inbound_id) -> Inbound:
+    async def get_specific_inbound(self, inbound_id: int) -> Inbound:
         """Retrieve a specific inbound by ID.
 
         Args:
@@ -159,7 +163,7 @@ class Clients(BaseEndpoint):
         - /panel/api/inbounds/delDepletedClients/{inbound_id}
         - /panel/api/inbounds/{inbound_id}/delClient/{email|uuid}
     """
-    _url = "panel/api/inbounds/"
+    _url = "panel/api/inbounds"
 
     #although it's the same url, they should be differentiated
 
@@ -172,11 +176,11 @@ class Clients(BaseEndpoint):
         Returns:
             A ClientStats model instance with the client's statistics.
         """
-        endpoint = f"getClientTraffics/{email}"
+        endpoint = f"/getClientTraffics/{email}"
         resp = await self._simple_get(endpoint)
         return ClientStats.model_validate(resp)
 
-    async def get_client_with_uuid(self, uuid: str) -> List[ClientStats]:
+    async def get_client_with_uuid(self, uuid: str) -> list[ClientStats]:
         """Retrieve client statistics by UUID.
 
         Args:
@@ -185,7 +189,7 @@ class Clients(BaseEndpoint):
         Returns:
             A list of ClientStats model instances matching the UUID.
         """
-        endpoint = f"getClientTrafficsById/{uuid}"
+        endpoint = f"/getClientTrafficsById/{uuid}"
         resp = await self._simple_get(endpoint)
         client_stats = ClientStats.from_list(resp)
         return client_stats
@@ -209,8 +213,8 @@ class Clients(BaseEndpoint):
             ValueError: If a single client is provided without an inbound_id.
             TypeError: If the client type is not supported.
         """
-        endpoint = f"addClient"
-        if isinstance(client, Dict):
+        endpoint = f"/addClient"
+        if isinstance(client, dict):
             try:
                 final = InboundClients.model_validate(client)
             except ValidationError:
@@ -222,6 +226,8 @@ class Clients(BaseEndpoint):
                 else:
                     raise ValueError("A single client was provided to be added but no parent inbound id")
         elif isinstance(client, SingleInboundClient):
+            if not inbound_id:
+                raise ValueError("A single client was provided to be added but no parent inbound id")
             final = InboundClients(id=inbound_id,
                                    settings=ClientsSettings(clients=[client]))
         elif isinstance(client, InboundClients):
@@ -236,32 +242,30 @@ class Clients(BaseEndpoint):
         #YOU NEED TO PASS SETTINGS AS A STRING, NOT AS A DICT, YOU IDIOT!
         return resp
 
-    async def _request_update_client(self, client: InboundClients | SingleInboundClient,
-                                     inbound_id: int | None = None,
-                                     *, original_uuid: str | None = None) -> Response:
+    async def request_update_client(self, client: InboundClients | SingleInboundClient,
+                                    inbound_id: int | None = None,
+                                    *, original_uuid: str | None = None) -> Response:
         """Request to update an existing client.
 
         Args:
             client: The client data to update. Can be:
-                - A ClientUpdatePayload - Recommended (requires inbound_id)
                 - A SingleInboundClient (requires inbound_id)
                 - An InboundClients object (with one client)
             inbound_id: The ID of the inbound the client belongs to.
-                Required if client is a SingleInboundClient or ClientUpdatePayload.
+                Required if client is a SingleInboundClient.
             original_uuid: The original UUID of the client to update.
-                Required if client is a SingleInboundClient or ClientUpdatePayload.
+                Required by the 3X-UI update endpoint.
 
         Returns:
             The HTTP response from the API.
         """
         if isinstance(client, SingleInboundClient):
             client = InboundClients(id=inbound_id, settings=ClientsSettings(clients=[client]))
-        _endpoint = f"updateClient/{original_uuid if original_uuid else client.settings.clients[0].uuid}"
-        #we have to do this because if we do model.dump() it will return a Settings **OBJECT** which we DON'T want.
+        _endpoint = f"/updateClient/{original_uuid}"
+        # we have to do this because if we do model.dump() it will return a Settings **OBJECT** which we DON'T want.
         resp = await self.client.safe_post(f"{self._url}{_endpoint}",
                                            json=json.loads(client.model_dump_json(exclude_none=True, by_alias=True)))
         return resp
-
 
     async def update_single_client(self, inbound_id: int, client_uuid: str, *,
                                    security: str | None = None,
@@ -278,15 +282,15 @@ class Clients(BaseEndpoint):
         """Update an existing client's details.
 
         Args:
-            client_uuid: The UUID of the original client.
             inbound_id: The ID of the inbound the client belongs to.
+            client_uuid: The UUID of the original client.
             security: New security settings (optional).
             password: New password (optional).
             flow: New flow settings (optional).
             email: New email address (optional).
             limit_ip: New IP limit (optional).
-            limit_gb: New GB limit (optional).
-            expiry_time: New expiry time (optional).
+            limit_gb: New traffic limit in gigabytes (optional).
+            expiry_time: New expiry time as a UNIX timestamp in seconds (optional).
             enable: New enable status (optional).
             sub_id: New subscription ID (optional).
             comment: New comment (optional).
@@ -306,8 +310,9 @@ class Clients(BaseEndpoint):
             raise ClientDoesNotExistError(f"The target inbound was checked but client {client_uuid} was not found.")
 
         changes["updated_at"] = int(datetime.now(UTC).timestamp())
+        #TODO: see if model_copy actually does validation
         updated = found_inbound.model_copy(update=changes)
-        resp = await self._request_update_client(updated, inbound_id)
+        resp = await self.request_update_client(updated, inbound_id, original_uuid=client_uuid)
         return resp
 
     async def delete_expired_clients(self, inbound_id: int) -> Response:
@@ -319,7 +324,7 @@ class Clients(BaseEndpoint):
         Returns:
             The HTTP response from the API.
         """
-        _endpoint = f"delDepletedClients/"
+        _endpoint = f"/delDepletedClients/"
         resp = await self.client.safe_post(f"{self._url}{_endpoint}{inbound_id}")
         return resp
 
@@ -333,7 +338,7 @@ class Clients(BaseEndpoint):
         Returns:
             The HTTP response from the API.
         """
-        _endpoint = f"{inbound_id}/delClientByEmail/{email}"
+        _endpoint = f"/{inbound_id}/delClientByEmail/{email}"
         resp = await self.client.safe_post(f"{self._url}{_endpoint}")
         return resp
 
@@ -347,6 +352,6 @@ class Clients(BaseEndpoint):
         Returns:
             The HTTP response from the API.
         """
-        _endpoint = f"{inbound_id}/delClient/{uuid}"
+        _endpoint = f"/{inbound_id}/delClient/{uuid}"
         resp = await self.client.safe_post(f"{self._url}{_endpoint}")
         return resp

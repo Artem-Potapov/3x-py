@@ -1,3 +1,5 @@
+"""Public package interface for the python_3xui API wrapper."""
+
 from .api import XUIClient
 
 __author__ = "JustMe_001"

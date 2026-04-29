@@ -2,7 +2,6 @@ import json
 from datetime import datetime, UTC
 from typing import Union, TypeAlias, Any, Annotated, Literal, List, Dict, ClassVar
 
-import pydantic
 from pydantic import field_validator, Field, field_serializer
 from typing_extensions import TypeVar
 
@@ -31,7 +30,8 @@ def exclude_if_none(field) -> bool:
 _IntNone = TypeVar("_IntNone", bound=int | None)
 
 
-class SingleInboundClient(pydantic.BaseModel):
+# noinspection PyNestedDecorators
+class SingleInboundClient(base_model.BaseModel):
     """Represents a single client within a VLESS/VMess inbound.
 
     This model represents an individual VPN client with all its configuration
@@ -58,11 +58,12 @@ class SingleInboundClient(pydantic.BaseModel):
     security: str = ""
     password: str = ""
     flow: Literal["", "xtls-rprx-vision", "xtls-rprx-vision-udp443"]
-    email: Annotated[str, Field(alias="email")]
+    email: str
     limit_ip: Annotated[int, Field(alias="limitIp")] = 20
     reset: int = 0
     #Interestingly, the API expects this value to be called GB but it's actually bytes.
-    limit_gb: Annotated[int, Field(alias="totalGB")] = 0  # total flow
+    # I want the pythonic side to be in GB (hence why floats, i.e. 2.5GB), but the API expects bytes.
+    limit_gb: Annotated[int | float, Field(alias="totalGB")] = 0  # total flow
     expiry_time: Annotated[timestamp_seconds, Field(alias="expiryTime")] = 0
     enable: bool = True
     tg_id: Annotated[Union[int, str], Field(alias="tgId")] = ""
@@ -75,26 +76,30 @@ class SingleInboundClient(pydantic.BaseModel):
         default_factory=(lambda: int(datetime.now(UTC).timestamp())))
     ]
 
-    # noinspection PyNestedDecorators
     @field_validator(TIME_FIELDS[0], *TIME_FIELDS[1:], mode="after")
     @classmethod
     def ensure_s_timestamp(cls, value: _IntNone) -> _IntNone:
         return auto_ms_to_s_timestamp(value)
 
-    # noinspection PyNestedDecorators
     @field_serializer(TIME_FIELDS[0], *TIME_FIELDS[1:])
     @classmethod
-    def serialize_ms_timestamp(cls, value: _IntNone) -> _IntNone:
-        return auto_s_to_ms_timestamp(value) if value is not None else None
+    def serialize_ms_timestamp(cls, value: int) -> int:
+        return auto_s_to_ms_timestamp(value)
 
-    # noinspection PyNestedDecorators
     @field_serializer("limit_gb")
     @classmethod
-    def serialize_total_gb(cls, value: _IntNone) -> _IntNone:
-        return value * (1024 ** 3) if value is not None else None
+    def serialize_total_gb(cls, value: int | float) -> int:
+        #API expects an integer of bytes.
+        return value * (1024 ** 3)
+
+    @field_validator("limit_gb", mode="after")
+    @classmethod
+    def parse_total_gb(cls, value: int) -> int | float:
+        #Python wants an int/float of GB.
+        return value / (1024 ** 3)
 
 
-class ClientsSettings(pydantic.BaseModel):
+class ClientsSettings(base_model.BaseModel):
     """Settings container for inbound clients.
 
     Attributes:
@@ -103,10 +108,10 @@ class ClientsSettings(pydantic.BaseModel):
     clients: list[SingleInboundClient]
     decryption: Annotated[str, Field(exclude_if=lambda x: x == "none")] = "none"
     encryption: Annotated[str, Field(exclude_if=lambda x: x == "none")] = "none"
-    fallbacks: Annotated[list|None, Field(exclude_if=exclude_if_none)] = None
+    fallbacks: Annotated[list | None, Field(exclude_if=exclude_if_none)] = None
 
 
-class InboundClients(pydantic.BaseModel):
+class InboundClients(base_model.BaseModel):
     """Represents a collection of clients for an inbound connection.
 
     This model is used when adding or updating clients on an inbound,
@@ -187,6 +192,7 @@ class InboundClients(pydantic.BaseModel):
 #     external_proxy: Annotated[list[ExternalProxy], Field(alias="externalProxy")]
 #     tcp_settings: TCPSettings
 
+# noinspection PyNestedDecorators
 class ClientStats(base_model.BaseModel):
     """Statistics and configuration for a VPN client.
 
@@ -203,10 +209,12 @@ class ClientStats(base_model.BaseModel):
         up: Total uploaded bytes.
         down: Total downloaded bytes.
         allTime: Total bytes transferred (up + down).
-        expiryTime: Client expiry time as UNIX timestamp in MILLISECONDS.
+        expiryTime: Client expiry time as a UNIX timestamp in seconds on the
+            Python model, serialized to milliseconds for the API.
         total: Total data limit in bytes.
         reset: Counter for traffic resets.
-        lastOnline: UNIX timestamp of last connection.
+        lastOnline: UNIX timestamp of last connection in seconds on the
+            Python model, serialized to milliseconds for the API.
     """
     TIME_FIELDS: ClassVar[List[str]] = ["expiryTime", "lastOnline"]
     id: int
@@ -223,17 +231,18 @@ class ClientStats(base_model.BaseModel):
     reset: int
     lastOnline: timestamp_seconds
 
-    @classmethod
     @field_validator(TIME_FIELDS[0], *TIME_FIELDS[1:], mode="after")
+    @classmethod
     def ensure_s_timestamp(cls, value: int) -> int:
         return auto_ms_to_s_timestamp(value)
 
-    @classmethod
     @field_serializer(TIME_FIELDS[0], *TIME_FIELDS[1:])
+    @classmethod
     def serialize_ms_timestamp(cls, value: int) -> int:
         return auto_s_to_ms_timestamp(value)
 
 
+# noinspection PyNestedDecorators
 class Inbound(base_model.BaseModel):
     """Represents a VPN inbound connection configuration.
 
@@ -274,7 +283,8 @@ class Inbound(base_model.BaseModel):
     clientStats: list[ClientStats] | None
     listen: str
     port: int
-    protocol: Literal["vless", "vmess", "trojan", "shadowsocks", "wireguard"]  # note: there are some "deprecated" like wireguard
+    #TODO: add trojan, shadowsocks, wireguard back in when they are supported by the API
+    protocol: Literal["vless", "vmess"]  #"trojan", "shadowsocks", "wireguard"]  # note: there are some "deprecated" like wireguard
     settings: ClientsSettings  # JSON packed value, stringified
     streamSettings: Union[json_string, Dict[Any, Any]]  # JSON packed value, stringified
     tag: str
@@ -315,12 +325,12 @@ class Inbound(base_model.BaseModel):
             return ""
         return json.dumps(value, ensure_ascii=False)
 
-    @classmethod
     @field_validator(TIME_FIELDS[0], *TIME_FIELDS[1:], mode="after")
+    @classmethod
     def ensure_s_timestamp(cls, value: int) -> int:
         return auto_ms_to_s_timestamp(value)
 
-    @classmethod
     @field_serializer(TIME_FIELDS[0], *TIME_FIELDS[1:])
+    @classmethod
     def serialize_ms_timestamp(cls, value: int) -> int:
         return auto_s_to_ms_timestamp(value)

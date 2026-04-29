@@ -1,6 +1,7 @@
-"""Utility functions and helpers for the VPNAPIHandler.
+"""Utility functions and helpers for the python_3xui package.
 
-This module provides common utilities used across the API handler including:
+This module provides common utilities used across the 3X-UI API wrapper,
+including:
 - String conversion helpers (camelCase to snake_case)
 - Async generators
 - Base64 encoding utilities
@@ -14,9 +15,12 @@ import logging
 import random
 import re
 from datetime import UTC, datetime, tzinfo
-from typing import TypeAlias, Union, Dict, Any, List
+from typing import TYPE_CHECKING, TypeAlias, Union, Dict, Any, List
 
 import httpx
+
+if TYPE_CHECKING:
+    from python_3xui.models import Inbound, SingleInboundClient
 
 JsonType: TypeAlias = Union[Dict[Any, Any], List[Any]]
 
@@ -57,13 +61,12 @@ async def async_range(start: int, stop: int|None=None, step: int=1):
     Yields:
         int: The next value in the range sequence.
     """
-    if stop:
+    if stop is not None:
         range_ = range(start, stop, step)
     else:
         range_ = range(start)
     for i in range_:
         yield i
-        await asyncio.sleep(0)
 
 
 def base64_from_string(string: str, omit_trailing_equals: bool = False) -> str:
@@ -71,10 +74,12 @@ def base64_from_string(string: str, omit_trailing_equals: bool = False) -> str:
 
     Args:
         string: The input string to encode.
-        omit_trailing_equals: If True, removes trailing '=' padding characters.
+        omit_trailing_equals: Reserved for callers that do not want trailing
+            ``=`` padding. The current implementation returns standard padded
+            base64 output.
 
     Returns:
-        The base64 encoded string.
+        The base64-encoded string.
     """
     return base64.b64encode(bytes(str(string).encode("utf-8"))).decode()
 
@@ -124,7 +129,15 @@ def get_uuid_from_tgid(telegram_id: int, fixed: bool = True) -> str:
     return f"{now.year}{mon}{day}-{hr}{mn}-1111-1111-{resid}"
 
 
-def random_string(length: int):
+def random_string(length: int) -> str:
+    """Generate a random alphanumeric string.
+
+    Args:
+        length: Number of characters to generate.
+
+    Returns:
+        A string made from ASCII letters and digits.
+    """
     s = "".join([random.choice(
         "1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ") for _ in range(length)
     ])
@@ -143,6 +156,22 @@ def generate_random_email(length: int = 8) -> str:
         >>> generate_random_email(8)  # Random output like 'aB3xY9zQ'
     """
     return random_string(length)
+
+
+def get_inbound_in_client(client_uuid: str, inbound: Inbound) -> SingleInboundClient|None:
+    """Find a client inside an inbound by UUID.
+
+    Args:
+        client_uuid: UUID of the client to find.
+        inbound: Inbound model whose client list should be searched.
+
+    Returns:
+        The matching client, or None if the inbound does not contain it.
+    """
+    for client in inbound.settings.clients:
+        if client.uuid == client_uuid:
+            return client
+    return None
 
 
 def generate_email_from_tgid_inbid(telegram_id: int, /, inbound_id: int) -> str:
@@ -165,7 +194,7 @@ def generate_email_from_tgid_inbid(telegram_id: int, /, inbound_id: int) -> str:
     return f"TG{telegram_id}IB{inbound_id}"
 
 
-def generate_new_subscription(length: int = 16):
+def generate_new_subscription(length: int = 16) -> str:
     """Generate a random subscription ID.
 
     Args:
@@ -180,7 +209,7 @@ def generate_new_subscription(length: int = 16):
     return random_string(length)
 
 
-async def check_xui_response(response: JsonType | httpx.Response) -> str:
+async def check_xui_response(response: dict | httpx.Response) -> str:
     """Validate a 3X-UI API response.
 
     Checks if the response follows the expected 3X-UI API format with
@@ -209,7 +238,7 @@ async def check_xui_response(response: JsonType | httpx.Response) -> str:
         json_resp = response.json()
     else:
         json_resp = response
-
+    
     if len(json_resp) == 3:
         if tuple(json_resp.keys()) == ("success", "msg", "obj"):
             success: bool = json_resp["success"]
@@ -285,4 +314,4 @@ def auto_ms_to_s_timestamp(ms_or_s: int) -> int:
 
 def datetime_now_ms(tzinfo: tzinfo|None=UTC) -> int:
     """Get the current time as a UNIX timestamp in milliseconds."""
-    return int(datetime.now(tzinfo).timestamp()) * 1000
+    return int(datetime.now(tzinfo).timestamp() * 1000) 

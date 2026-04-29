@@ -129,7 +129,7 @@ class TestXUIClientHelpers:
             before = await xui_client.clients_end.get_client_with_email(email)
             assert before.enable is True, "Newly created client should start enabled"
 
-            resp = await xui_client.update_client_by_tgid(
+            resp = await xui_client.update_client_by_tgid_inbid(
                 _TGID_UPDATE, target_inbound.id, verbose=False, sub_id=_TEST_SUB_ID,
             )
             assert resp.status_code == 200

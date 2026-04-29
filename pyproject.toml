@@ -23,7 +23,6 @@ dependencies = [
     "pydantic ~= 2.12.5, < 3",
     "httpx ~=0.28.1",
     "dotenv ~= 0.9.9",
-    "python-dotenv",
     "async_lru ~= 2.3.0",
     "pyotp ~= 2.9.0"
 ]

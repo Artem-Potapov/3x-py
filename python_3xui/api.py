@@ -8,6 +8,7 @@ from datetime import datetime, UTC
 from inspect import iscoroutinefunction
 from logging import DEBUG
 from typing import Self, Optional, Dict, Iterable, AsyncIterable, Type, Union, Any, List, Tuple, Literal, Callable, Awaitable, overload
+import contextlib
 
 import httpx
 import pyotp
@@ -17,19 +18,20 @@ from pydantic import SecretStr
 
 from . import custom_exceptions
 from . import util
+from . import endpoints
 from .models import Inbound, SingleInboundClient, ClientStats
-from .util import JsonType, async_range
+from .util import JsonType, async_range, get_inbound_in_client
 
 DataType: Type[str | bytes | Iterable[bytes] | AsyncIterable[bytes]] = Union[str, bytes, Iterable[bytes], AsyncIterable[bytes]]
 PrimitiveData = Optional[Union[str, int, float, bool]]
 ParamType = Union[
     Mapping[str, Union[PrimitiveData, Sequence[PrimitiveData]]],
-    List[Tuple[str, PrimitiveData]],
-    Tuple[Tuple[str, PrimitiveData], ...],
+    list[Tuple[str, PrimitiveData]],
+    tuple[Tuple[str, PrimitiveData], ...],
     str,
     bytes,
 ]
-CookieType = Union[Dict[str, str], List[Tuple[str, str]]]
+CookieType = Union[Dict[str, str], list[tuple[str, str]]]
 HeaderType = Union[
     Mapping[str, str],
     Mapping[bytes, bytes],
@@ -43,21 +45,26 @@ class XUIClient:
 
     This class provides methods for authenticating with the 3X-UI panel,
     managing sessions, and performing operations on inbounds and clients.
+    It also owns the endpoint handlers and the per-instance production
+    inbound cache.
 
     Attributes:
-        PROD_STRING: String used to identify production inbounds.
-        session: The async HTTP client session.
+        connected: Whether an HTTP session is currently open.
+        PROD_STRING: Compiled regex used to identify production inbounds.
+        session: The async HTTP client session, if connected.
         base_host: The server hostname.
         base_port: The server port.
         base_path: The base path for the API.
         base_url: The full base URL for API requests.
         session_start: Timestamp of when the session was created.
         session_duration: Maximum session duration in seconds.
-        username: Username for authentication.
-        password: Password for authentication.
-        two_fac_code: Two-factor authentication code (if enabled).
+        xui_username: Username for authentication.
+        xui_password: Password for authentication.
+        two_fac_secret: TOTP secret or one-shot 2FA code, if configured.
+        totp: TOTP generator used for repeated logins when a secret is provided.
         max_retries: Maximum number of retry attempts for failed requests.
         retry_delay: Delay in seconds between retries.
+        sub_gen: Callable used to derive subscription IDs from Telegram IDs.
         server_end: Server endpoint handler.
         clients_end: Clients endpoint handler.
         inbounds_end: Inbounds endpoint handler.
@@ -67,8 +74,8 @@ class XUIClient:
                  *, username: str | None = None, password: str | None = None,
                  two_fac_code: str | None = None, session_duration: int = 3600,
                  custom_prod_string: str = "testing",
-                 max_retries: int = 5, retry_delay = 1,
-                 custom_sub_generator: Callable[[int], str]|Callable[[int], Awaitable[str]] = util.default_sub_from_tgid,
+                 max_retries: int = 5, retry_delay=1,
+                 custom_sub_generator: Callable[[int], str] | Callable[[int], Awaitable[str]] = util.default_sub_from_tgid,
                  ) -> None:
         """Initialize the XUIClient.
 
@@ -78,10 +85,15 @@ class XUIClient:
             base_path: The base path for the API (e.g., "/panel").
             username: Username for authentication.
             password: Password for authentication.
-            two_fac_code: Two-factor authentication code (if enabled).
+            two_fac_code: TOTP secret for 2FA. Short one-shot codes are
+                accepted for the current login only.
             session_duration: Maximum session duration in seconds. Defaults to 3600.
+            custom_prod_string: Regex pattern used to select production inbounds.
+            max_retries: Maximum retries for database-lock responses.
+            retry_delay: Seconds to wait between database-lock retries.
+            custom_sub_generator: Sync or async callable that receives a
+                Telegram ID and returns the subscription ID for new clients.
         """
-        from . import endpoints  # look, I know it's bad, but we need to evade cyclical imports
         self.connected: bool = False
         self.PROD_STRING = re.compile(custom_prod_string)
         self.session: AsyncClient | None = None
@@ -107,7 +119,7 @@ class XUIClient:
         # a new XUIClient on a fresh loop (e.g. each pytest-asyncio test). Building the wrapper here gives every
         # instance its own cache bound to its own loop.
         self.get_production_inbounds = alru_cache(maxsize=128)(self._get_production_inbounds_impl)
-        self._cache_cleaner_task: Task|None = None
+        self._cache_cleaner_task: Task | None = None
         #init self.totp
         if self.two_fac_secret:
             if len(self.two_fac_secret.get_secret_value()) <= 8:
@@ -129,33 +141,52 @@ class XUIClient:
         ...
 
     async def _safe_request(self,
-                            method: Literal["get", "post", "patch", "delete", "put"]|None=None,
+                            method: Literal["get", "post", "patch", "delete", "put"] | None = None,
                             **kwargs) -> Response:
         """Execute an HTTP request with automatic retry on database lock.
 
-        This method handles automatic session refresh and retries when
-        the 3X-UI database is locked.
+        The request can be made either from a prebuilt ``request_to_send`` or
+        from an HTTP method plus keyword arguments accepted by ``httpx``.
+        The method handles automatic session refresh on expired 404 responses
+        and retries when the 3X-UI database is locked.
 
         Args:
-            method: The HTTP method to use.
-            **kwargs: Additional arguments passed to the HTTP request.
+            method: The HTTP method to use when building a new request.
+            **kwargs: Either ``request_to_send`` by itself, or request
+                arguments such as ``url``, ``json``, ``params``, and headers.
 
         Returns:
             The HTTP response.
 
         Raises:
-            RuntimeError: If max retries exceeded or session is invalid.
+            ValueError: If neither a method nor a prebuilt request is provided,
+                or both request styles are mixed.
+            RuntimeError: If max retries are exceeded or a valid session gets
+                an unexpected 404 response.
         """
         if "request_to_send" in kwargs and len(kwargs.keys()) != 1:
-            raise ValueError("It's either a predetermined a request or args to build your own.")
+            raise ValueError("Provide either a prebuilt request or arguments to build one.")
         if not "request_to_send" in kwargs:
             if method is None:
                 raise ValueError("If there's no prebuilt request, you must provide a method.")
 
-        #FIXME: make it also extract JSON out of a ready request
+        url = kwargs["url"] if "url" in kwargs.keys() else kwargs["request_to_send"].url
+        if "json" in kwargs:
+            json_payload = kwargs["json"]
+        elif "request_to_send" in kwargs:
+            _req = kwargs["request_to_send"]
+            if _req.content:
+                try:
+                    json_payload = json.loads(_req.content.decode())
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    json_payload = None
+            else:
+                json_payload = None
+        else:
+            json_payload = None
         logging.info("Safe %s is running to %s%s\nJSON Payload: %s",
-                      method, str(self.session.base_url), str(kwargs["url"]) or kwargs["request_to_send"].url,
-                      json.dumps(kwargs["json"]) if "json" in kwargs.keys() else "(no payload)")
+                     method, str(self.session.base_url), str(url),
+                     json.dumps(json_payload) if json_payload is not None else "(no payload)")
         async for attempt in async_range(self.max_retries):
             if "request_to_send" in kwargs:
                 _request: Request = kwargs["request_to_send"]
@@ -295,11 +326,12 @@ class XUIClient:
         resp = await self.session.post("/login", data=payload)
         if resp.status_code == 200:
             resp_json = resp.json()
-            if resp_json["success"]:
-                self.session_start: float = (datetime.now(UTC).timestamp())
-                return
-            else:
+            if "success" not in resp_json:
+                raise RuntimeError(f"Error: server returned a status code of {resp.status_code} but the response is not valid: {resp_json}")
+            if not resp_json["success"]:
                 raise ValueError("Error: wrong credentials (including status code) or failed login.")
+            self.session_start: float = (datetime.now(UTC).timestamp())
+            return
         else:
             raise RuntimeError(f"Error: server returned a status code of {resp.status_code}")
 
@@ -322,7 +354,8 @@ class XUIClient:
         This method closes the async HTTP client session.
         """
         if self._cache_cleaner_task is not None:
-            self._cache_cleaner_task.cancel("Panel is exiting.")
+            with contextlib.suppress(asyncio.CancelledError):
+                self._cache_cleaner_task.cancel("Panel is exiting.")
         self.connected = False
 
         if self.session is not None:
@@ -341,7 +374,7 @@ class XUIClient:
         self.connect()
         await self.login()
         self._cache_cleaner_task = asyncio.create_task(
-            self.clear_prod_inbound_cache(), name=f"inb_cache_clearer_for_{self.base_url}"
+            self._clear_prod_inbound_cache_task(), name=f"inb_cache_clearer_for_{self.base_url}"
         )
         return self
 
@@ -356,7 +389,7 @@ class XUIClient:
             exc_val: The exception value, if an exception occurred.
             exc_tb: The exception traceback, if an exception occurred.
         """
-        if exc_type is None or exc_type == asyncio.exceptions.CancelledError:
+        if exc_type is None or exc_type is asyncio.exceptions.CancelledError:
             logging.info("Client is disconnecting at time with IP/Domain %s", self.base_host)
         else:
             logging.warning("Client is disconnecting due to an error (may be unrelated):"
@@ -391,24 +424,23 @@ class XUIClient:
 
         return tuple(usable_inbounds)
 
-    async def clear_prod_inbound_cache(self):
-        """Clear the production inbound cache.
+    async def _clear_prod_inbound_cache_task(self):
+        """Refresh the production inbound cache in the background.
 
-        This method clears the cache of production inbounds and refills it
-        by fetching the inbounds again. It is intended to be run as a
-        background task.
-
-        Note:
-            This method currently runs every 10 seconds. Please change the
-            timer from 5 to 60*60*24 in the code.
+        The async context manager starts this loop after login. Each cycle
+        clears the cached production inbound list, repopulates it from the
+        panel, and then waits before refreshing again.
         """
+        if self._cache_cleaner_task is not None:
+            logging.warning("You're trying to create another cache cleaner task, which is a FaF (Fire-And-Forget)."
+                            "Please destroy the previous task and set _cache_cleaner_task to None, if you know what you're doing.")
         while self.connected:
             self.get_production_inbounds.cache_clear()
-            await self.get_production_inbounds()  #fill the cache
-            await asyncio.sleep(3600)  #update every 1h
+            await self.get_production_inbounds()  # fill the cache
+            await asyncio.sleep(3600)  # update every 1h
 
     #========================clients management========================
-    async def get_client_with_tgid(self, tgid: int, inbound_id: int | None = None) -> List[ClientStats]:
+    async def get_client_with_tgid(self, tgid: int, inbound_id: int | None = None) -> list[ClientStats]:
         """Retrieve client information by Telegram ID.
 
         This method fetches client information using the Telegram ID. If
@@ -436,25 +468,31 @@ class XUIClient:
 
     async def create_and_add_prod_client(self, telegram_id: int, *,
                                          additional_remark: str | None = None,
-                                         expiry_time: int=0,
+                                         expiry_time: int = 0,
                                          exist_ok: bool = False
                                          ) -> list[Response]:
         """Create and add a production client.
 
         This method creates a new client with the given Telegram ID and
         adds it to the production inbounds. The client is configured with
-        default settings and the additional remark.
-        Note that the sub id is created by util.generate_email_from_tgid_inbid, so use that to retrieve.
+        default settings and the additional remark. The subscription ID is
+        created by ``self.sub_gen``; by default this is
+        ``util.default_sub_from_tgid``.
 
         Args:
             telegram_id: The Telegram ID of the client.
             additional_remark: An optional additional remark for the client.
             expiry_time: Expiry time in SECONDS as a UNIX timestamp.
-            exist_ok: Don't raise any errors if the client is already there (good if you need a refresh job)
+            exist_ok: If True, return API responses even when the panel reports
+                a duplicate email.
 
         Returns:
             List[Response]: A list of responses from the server for each
             inbound the client was added to.
+
+        Raises:
+            ClientEmailAlreadyExistsError: If a duplicate client is reported
+                and ``exist_ok`` is False.
         """
         production_inbounds: tuple[Inbound, ...] = await self.get_production_inbounds()
 
@@ -466,15 +504,15 @@ class XUIClient:
             custom_sub = self.sub_gen(telegram_id)
         for inb in production_inbounds:
             tmp_email = util.generate_email_from_tgid_inbid(telegram_id, inb.id)
-            client = SingleInboundClient.model_construct(
+            client = SingleInboundClient(
                 uuid=util.get_uuid_from_tgid(telegram_id),
                 flow="",
                 email=tmp_email,
                 limit_gb=0,
                 enable=True,
                 subscription_id=custom_sub,
-                comment=f"{additional_remark}, created at {datetime.now(UTC)}",
-                expiry_time=expiry_time * 1000
+                comment=f"{additional_remark + ", " if additional_remark else ""}created at {datetime.now(UTC)}",
+                expiry_time=expiry_time * 1000,
             )
             tasks.append(asyncio.create_task(self.clients_end.add_client(client, inb.id)))
         responses: list[Response] = await asyncio.gather(*tasks)
@@ -487,19 +525,28 @@ class XUIClient:
                 raise custom_exceptions.ClientEmailAlreadyExistsError(json_resp["msg"])
         return responses
 
-    async def _find_client_in_inbound(self, client_uuid: str, inbound_id: int) -> SingleInboundClient|None:
-        prod_inbs = await self.get_production_inbounds() #check production first since they're all cached
-        prod_inb_index = None
-        for i, prod_inb in enumerate(prod_inbs):  # see if inbound is production
-            if inbound_id == prod_inb.id:
-                prod_inb_index = i
+    async def _find_client_in_inbound(self, client_uuid: str, inbound_id: int, use_cache=False) -> SingleInboundClient | None:
+        """Note:
+            Cached production inbounds can be stale because the panel may be
+            changed by another actor. If a cached production inbound misses the
+            client, the production cache is cleared and fetched once more
+            before falling back to a direct inbound lookup.
+        """
+        if use_cache:
+            prod_inbs = await self.get_production_inbounds()
+            prod_inb_index = None
+            for i, prod_inb in enumerate(prod_inbs):  # see if inbound is production
+                if inbound_id == prod_inb.id:
+                    prod_inb_index = i
 
-        if prod_inb_index is not None:
-            needed_inb: Inbound = prod_inbs[prod_inb_index]
-            for client in needed_inb.settings.clients:
-                if client.uuid == client_uuid:
-                    return client
-            self.get_production_inbounds.cache_clear() # this means client is in a prod inbound but it's not refreshed
+            if prod_inb_index is not None:
+                needed_inb: Inbound = prod_inbs[prod_inb_index]
+                result = get_inbound_in_client(client_uuid, needed_inb)
+                if result is None:
+                    self.get_production_inbounds.cache_clear()  # this means client is in a prod inbound but it's not refreshed
+                    new_inb = (await self.get_production_inbounds())[prod_inb_index]
+                    new_result = get_inbound_in_client(client_uuid, new_inb)
+                    return new_result
 
         inb = await self.inbounds_end.get_specific_inbound(inbound_id)
         for client in inb.settings.clients:
@@ -507,19 +554,97 @@ class XUIClient:
                 return client
         return None
 
-    async def update_client_by_tgid(self, telegram_id: int, inbound_id: int, /, *,
-                                    security: str | None = None,
-                                    password: str | None = None,
-                                    flow: Literal["", "xtls-rprx-vision", "xtls-rprx-vision-udp443"] | None = None,
-                                    limit_ip: int | None = None,
-                                    limit_gb: int | None = None,
-                                    expiry_time: int | None = None,
-                                    enable: bool | None = None,
-                                    sub_id: str | None = None,
-                                    comment: str | None = None,
-                                    verbose: bool=True) -> Response:
+    async def update_client_by_tgid_only(self, telegram_id: int, prod_only: bool, /, *,
+                                         security: str | None = None,
+                                         password: str | None = None,
+                                         flow: Literal["", "xtls-rprx-vision", "xtls-rprx-vision-udp443"] | None = None,
+                                         limit_ip: int | None = None,
+                                         limit_gb: int | None = None,
+                                         expiry_time: int | None = None,
+                                         enable: bool | None = None,
+                                         sub_id: str | None = None,
+                                         comment: str | None = None,
+                                         verbose: bool = True
+                                         ) -> list[Response]:
+        """Update every matching client found by Telegram ID.
+
+        The client UUID is derived from ``telegram_id`` and searched across
+        either production inbounds or all inbounds. Only keyword arguments with
+        non-None values are applied to the client model before sending update
+        requests.
+
+        Args:
+            telegram_id: Telegram ID used to derive the client UUID.
+            prod_only: If True, search only production inbounds. If False,
+                search every inbound returned by the panel.
+            security: New security setting.
+            password: New password.
+            flow: New VLESS flow value.
+            limit_ip: New simultaneous IP connection limit.
+            limit_gb: New traffic limit in gigabytes.
+            expiry_time: New expiry timestamp in seconds.
+            enable: New enabled state.
+            sub_id: New subscription ID.
+            comment: New client comment.
+            verbose: If True, warn when ``expiry_time`` looks like a duration
+                instead of a UNIX timestamp.
+
+        Returns:
+            Responses from each inbound where a matching client was updated.
         """
-        Update a client in a specific inbound by Telegram ID.
+        updates = {
+            "security": security,
+            "password": password,
+            "flow": flow,
+            "limit_ip": limit_ip,
+            "limit_gb": limit_gb,
+            "expiry_time": expiry_time,
+            "enable": enable,
+            "sub_id": sub_id,
+            "comment": comment,
+        }
+        # remove None values
+        updates = {k: v for k, v in updates.items() if v is not None}
+
+        if verbose:
+            if expiry_time and expiry_time < 1e9:
+                logging.warning("Warning: You're trying to update a client with expiry time %s. "
+                                "You set it to expire before 2001, likely because you provided the DURATION. "
+                                "You need to provide a TIMESTAMP. "
+                                "If you want to disable this message, set verbose=false.",
+                                expiry_time)
+
+        _to_exec: list[Task] = []
+        if prod_only:
+            self.get_production_inbounds.cache_clear()
+            inbounds = await self.get_production_inbounds()
+        else:
+            inbounds = await self.inbounds_end.get_all()
+        for inbound in inbounds:
+            found_client = util.get_inbound_in_client(util.get_uuid_from_tgid(telegram_id), inbound)
+            if found_client:
+                new_client = found_client.model_copy(update=updates, deep=True)
+                _to_exec.append(
+                    asyncio.create_task(self.clients_end.request_update_client(
+                        new_client, inbound.id, original_uuid=util.get_uuid_from_tgid(telegram_id)
+                    ))
+                )
+        responses = await asyncio.gather(*_to_exec)
+        return responses
+
+    async def update_client_by_tgid_inbid(self, telegram_id: int, inbound_id: int, /, *,
+                                          security: str | None = None,
+                                          password: str | None = None,
+                                          flow: Literal["", "xtls-rprx-vision", "xtls-rprx-vision-udp443"] | None = None,
+                                          limit_ip: int | None = None,
+                                          limit_gb: int | None = None,
+                                          expiry_time: int | None = None,
+                                          enable: bool | None = None,
+                                          sub_id: str | None = None,
+                                          comment: str | None = None,
+                                          verbose: bool = True) -> Response:
+        """
+        Update a client in a specific inbound by Telegram ID. NOT optimized for multiple inbounds.
 
         Args:
             telegram_id: The Telegram ID of the client
@@ -583,12 +708,12 @@ class XUIClient:
             List of Response objects from each deletion attempt
         """
         production_inbounds = await self.get_production_inbounds()
-        responses = []
-
+        _to_exec: list[Task] = []
         for inbound in production_inbounds:
             email = util.generate_email_from_tgid_inbid(telegram_id, inbound.id)
-            resp = await self.clients_end.delete_client_by_email(email, inbound.id)
-            responses.append(resp)
-        logging.info("Clients of of tgid %s deleted", telegram_id)
-
+            _to_exec.append(
+                asyncio.create_task(self.clients_end.delete_client_by_email(email, inbound.id))
+            )
+            logging.info("Clients of of tgid %s pending deletion", telegram_id)
+        responses = await asyncio.gather(*_to_exec)
         return responses

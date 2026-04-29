@@ -33,7 +33,7 @@ class TestClientsEndpoint:
         # Try to find a suitable inbound (preferably with PROD_STRING in remark)
         test_inbound = None
         for inbound in all_inbounds:
-            if xui_client.PROD_STRING.search(inbound.remark.lower()):
+            if xui_client.PROD_STRING.search(inbound.remark):
                 test_inbound = inbound
                 break
 

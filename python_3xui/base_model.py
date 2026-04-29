@@ -7,7 +7,7 @@ import pydantic
 from . import util
 
 if TYPE_CHECKING:
-    from api import XUIClient
+    from .api import XUIClient
 
 class BaseModel(pydantic.BaseModel):
     """Base model for all 3X-UI API data models.
@@ -22,7 +22,7 @@ class BaseModel(pydantic.BaseModel):
     ERROR_RETRIES: ClassVar[int] = 5
     ERROR_RETRY_COOLDOWN: ClassVar[int] = 1
 
-    model_config = pydantic.ConfigDict(ignored_types=(cached_property, ))
+    model_config = pydantic.ConfigDict(ignored_types=(cached_property, ), validate_by_name=True, validate_by_alias=True)
 
     # def model_post_init(self, context: Any, /) -> None:
     #     #print(f"Model {self.__class__}, {self} initialized")
@@ -41,7 +41,7 @@ class BaseModel(pydantic.BaseModel):
             A list of model instances initialized with the provided data.
 
         Examples:
-            inbounds = Inbound.from_list([{"id": 1}, {"id": 2}], client=xui_client)
+            inbounds = Inbound.from_list([{"id": 1}, {"id": 2}])
         """
         return [cls(**obj) for obj in args]
 
@@ -86,6 +86,9 @@ class BaseModel(pydantic.BaseModel):
             if expect is dict:
                 return cls(**obj)
         else:
-            req = response.request
-            new_resp = await client._safe_request(request_to_send=req)
-            return await cls.from_response(new_resp, client=client, expect=expect, auto_retry=False)
+            if auto_retry:
+                req = response.request
+                new_resp = await client._safe_request(request_to_send=req)
+                return await cls.from_response(new_resp, client=client, expect=expect, auto_retry=False)
+            else:
+                raise util.DBLockedError("Failed to create model instance from response")
