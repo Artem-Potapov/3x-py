@@ -44,10 +44,16 @@ class TestInboundsEndpoint:
     async def test_get_specific_inbound_matches_get_all(self, xui_client: XUIClient):
         """Test get_specific_inbound matches data from get_all."""
         all_inbounds = await xui_client.inbounds_end.get_all()
+        assert len(all_inbounds) > 0
         test_id = all_inbounds[0].id
+
+        # Resolve the expected inbound by id rather than relying on list ordering.
+        matches = [i for i in all_inbounds if i.id == test_id]
+        assert len(matches) == 1, f"Expected exactly one inbound with id {test_id}, found {len(matches)}"
+        expected = matches[0]
+
         specific = await xui_client.inbounds_end.get_specific_inbound(test_id)
-        # Compare key fields
-        assert specific.id == all_inbounds[0].id
-        assert specific.remark == all_inbounds[0].remark
-        assert specific.port == all_inbounds[0].port
+        assert specific.id == expected.id
+        assert specific.remark == expected.remark
+        assert specific.port == expected.port
 

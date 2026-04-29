@@ -62,6 +62,7 @@ class TestInboundsEndpoint:
 
         # Create the inbound
         pytest.skip("Not implemented yet")
+        # noinspection PyUnreachableCode
         response = await xui_client.inbounds_end.add_inbound()
 
         # Validate response

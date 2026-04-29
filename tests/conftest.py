@@ -46,9 +46,6 @@ async def xui_client() -> XUIClient:
     except (ValueError, TypeError):
         pytest.skip(f"Invalid PORT environment variable: {port_str}")
 
-    # Reset singleton for clean test state
-    XUIClient._instance = None
-
     client = XUIClient(base_url, port, base_path, username=username, password=password, two_fac_code=two_fac, custom_prod_string="test3")
     client.connect()
 
@@ -56,7 +53,6 @@ async def xui_client() -> XUIClient:
     try:
         await client.login()
     except Exception as e:
-        raise
         await client.disconnect()
         pytest.skip(f"Failed to authenticate with XUIClient: {e}")
 
@@ -67,7 +63,4 @@ async def xui_client() -> XUIClient:
         await client.disconnect()
     except Exception:
         pass
-    finally:
-        # Reset singleton after test
-        XUIClient._instance = None
 

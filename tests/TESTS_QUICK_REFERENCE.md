@@ -57,7 +57,7 @@ XUI_PASSWORD=<pass>
 ✓ Real API testing (non-production safe)
 ✓ Async/await support with pytest-asyncio
 ✓ Shared fixtures for code reuse
-✓ Automatic singleton reset between tests
+✓ Fresh `XUIClient` instance per test via the `xui_client` fixture (no shared/global instance, so tests do not serialize API access)
 ✓ Graceful skip on missing environment/auth
 ✓ Clear, readable test assertions
 ✓ Proper cleanup and connection management

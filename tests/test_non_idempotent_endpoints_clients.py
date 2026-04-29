@@ -1,15 +1,12 @@
 import asyncio
-import time
+from datetime import UTC
 
 import pytest
-from datetime import datetime, UTC
-
 from pydantic import ValidationError
 
 from python_3xui.api import XUIClient
 from python_3xui.models import SingleInboundClient, ClientStats
-from python_3xui.util import get_uuid_from_tgid, s_to_ms_timestamp, datetime_now_ms, generate_email_from_tgid_inbid, \
-    generate_random_email
+from python_3xui.util import get_uuid_from_tgid, datetime_now_ms, generate_email_from_tgid_inbid
 
 
 class TestClientsEndpoint:
@@ -199,24 +196,20 @@ class TestClientsEndpoint:
     @pytest.mark.dependency(depends=["test_add_client", "test_delete_client_email"])
     async def test_delete_client_by_tgid_all_inbounds(self, xui_client: XUIClient):
         """Test deleting a client across all production inbounds by Telegram ID"""
-        # Get production inbounds
         production_inbounds = await xui_client.get_production_inbounds()
         if not production_inbounds:
             pytest.skip("No production inbounds found for testing")
         TEST_TELEGRAM_ID = 420
 
-        # Generate unique test data
         timestamp = datetime_now_ms(UTC)
-        test_uuid = get_uuid_from_tgid(TEST_TELEGRAM_ID)  # Different UUID
-        test_email = "IF_YOU_SEE_THIS_SOMETHING_IS_WRONG"
+        test_uuid = get_uuid_from_tgid(TEST_TELEGRAM_ID)
 
-        # Create a test client
-        test_client = SingleInboundClient.model_construct(
+        template_client = SingleInboundClient.model_construct(
             id=test_uuid,  # Using alias 'id' for 'uuid'
             security="",
             password="",
             flow="",
-            email=test_email,
+            email="",  # set per-inbound below
             limitIp=20,  # Using alias 'limitIp' for 'limit_ip'
             totalGB=0,  # Using alias 'totalGB' for 'limit_gb'
             expiryTime=timestamp + 86400 * 1000,  # Using alias 'expiryTime' for 'expiry_time'
@@ -228,23 +221,19 @@ class TestClientsEndpoint:
             updated_at=timestamp
         )
 
-        # Add client to all production inbounds
-        added_responses = []
+        # Add client to every production inbound, recording the email actually used.
+        emails_by_inbound: dict[int, str] = {}
         for inbound in production_inbounds:
-            #same email = exception, so we need to generate a new email for each inbound
-            send_client = test_client.model_copy(
-                update={"email": generate_email_from_tgid_inbid(TEST_TELEGRAM_ID, inbound.id)}
-            )
+            email = generate_email_from_tgid_inbid(TEST_TELEGRAM_ID, inbound.id)
+            send_client = template_client.model_copy(update={"email": email})
             response = await xui_client.clients_end.add_client(send_client, inbound.id)
-            assert response.status_code == 200
-            added_responses.append(response)
+            assert response.status_code == 200, f"Failed to add client to inbound {inbound.id}: {response.text}"
+            emails_by_inbound[inbound.id] = email
 
-        print(f"Added test client with email: {test_email}, UUID: {test_uuid} to {len(production_inbounds)} production inbounds")
+        print(f"Added test client UUID {test_uuid} to {len(production_inbounds)} production inbounds")
 
-        # Now delete the client from all production inbounds by Telegram ID
         responses = await xui_client.revoke_client_by_tgid_all_inbounds(TEST_TELEGRAM_ID)
 
-        # Validate responses
         assert len(responses) == len(production_inbounds)
         for response in responses:
             assert response.status_code == 200
@@ -254,13 +243,23 @@ class TestClientsEndpoint:
 
         print(f"Successfully deleted test client by Telegram ID from {len(responses)} production inbounds")
 
-        # Verify deletion by trying to get the deleted client from each inbound
-        for _ in production_inbounds:
+        # Verify each created email is actually gone. The 3X-UI panel responds with
+        # status 200 + null obj for missing clients, which surfaces as a ValidationError
+        # from ClientStats.model_validate (see test_delete_client_by_email).
+        for inbound_id, email in emails_by_inbound.items():
             try:
-                await xui_client.clients_end.get_client_with_email(test_email)
-                # If we get here, the client still exists in at least one inbound
-                await asyncio.sleep(1)  # Wait a moment in case of timing issues
-                pytest.fail("The client still exists after deletion attempt in at least one inbound")
-            except Exception:
-                # Expected - client should be deleted
-                pass
+                await xui_client.clients_end.get_client_with_email(email)
+            except ValidationError:
+                continue
+            pytest.fail(
+                f"Client with email {email} still exists in inbound {inbound_id} after revoke"
+            )
+
+        # Cross-check via UUID: no remaining stats should reference any production inbound.
+        remaining = await xui_client.clients_end.get_client_with_uuid(test_uuid)
+        prod_inbound_ids = {inb.id for inb in production_inbounds}
+        leftover = [c for c in remaining if c.inboundId in prod_inbound_ids]
+        assert not leftover, (
+            f"UUID lookup still returns {len(leftover)} client(s) in production inbounds: "
+            f"{[(c.inboundId, c.email) for c in leftover]}"
+        )

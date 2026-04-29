@@ -3,7 +3,6 @@ import json
 import os
 from pathlib import Path
 from dotenv import load_dotenv
-import certifi
 
 # Load environment variables
 load_dotenv("../.env")
@@ -92,7 +91,8 @@ class APIResponseGatherer:
             print(f"✗ Request to {endpoint} failed: {e}")
             return None
 
-    def save_stub(self, filename: str, data: dict | list | None) -> bool:
+    @staticmethod
+    def save_stub(filename: str, data: dict | list | None) -> bool:
         """
         Save API response to a JSON file in the response_stubs directory.
 
