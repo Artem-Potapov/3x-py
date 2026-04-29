@@ -1,12 +1,9 @@
-import asyncio
-import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type, Union, overload, Self, ClassVar, Annotated, Literal, Callable
-
-import pydantic
-import httpx
 from functools import cached_property
+from typing import TYPE_CHECKING, Any, Dict, List, Union, Self, ClassVar
 
-from . import models
+import httpx
+import pydantic
+
 from . import util
 
 if TYPE_CHECKING:
@@ -34,13 +31,11 @@ class BaseModel(pydantic.BaseModel):
 
     @classmethod
     def from_list(cls, args: List[Dict[str, Any]],
-                  client: "XUIClient"
                   ) -> List[Self]:
         """Create a list of model instances from a list of dictionaries.
 
         Args:
             args: A list of dictionaries containing model data.
-            client: The XUIClient instance to associate with each model.
 
         Returns:
             A list of model instances initialized with the provided data.
@@ -83,12 +78,14 @@ class BaseModel(pydantic.BaseModel):
             inbounds = await Inbound.from_response(response, client, list)
         """
         json_resp: util.JsonType = response.json()
-        valid = util.check_xui_response(json_resp)
+        valid = await util.check_xui_response(json_resp)
         if valid == "OK":
             obj = json_resp["obj"]
             if expect is list:
-                return cls.from_list(obj, client=client)
+                return cls.from_list(obj)
             if expect is dict:
-                return cls(**obj, client=client)
+                return cls(**obj)
         else:
-            raise ValueError(f"Invalid 3X-UI response, code {valid}. Don't use from_response on failed requests.")
+            req = response.request
+            new_resp = await client._safe_request(request_to_send=req)
+            return await cls.from_response(new_resp, client=client, expect=expect, auto_retry=False)
