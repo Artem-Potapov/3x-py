@@ -1,17 +1,16 @@
 import asyncio
-import datetime
-import json
 import logging
 
-import httpx
-import dotenv, os
+import dotenv
+import os
 
 from python_3xui.api import XUIClient
-from python_3xui.models import Inbound, SingleInboundClient
+from python_3xui.models import SingleInboundClient, InboundClients, ClientsSettings
 
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
+    force=True
 )
 
 dotenv.load_dotenv("./.env")
@@ -36,11 +35,6 @@ data = {
 
 #b = requests.get(f"{base_url}/panel/api/inbounds/list", cookies=cookies)
 
-async def create_client(telegram_id: int):
-    """
-    for inb in all_needeed_inbounds:
-        inb.add_client(uuid, blahblahblah)
-    """
 
 async def main():
     async with XUIClient(BASE_URL, PORT, BASE_PATH,
@@ -48,13 +42,15 @@ async def main():
                          password=XUI_PASSWORD,
                          two_fac_code=TWOFA_CODE,
                          custom_prod_string="test3") as client:
-        await client.create_and_add_prod_client(128124812, "help me")
-        await asyncio.sleep(2)
-        print("INB CREATED")
-        await client.revoke_client_by_tgid_all_inbounds(128124812)
-        while True:
-            await asyncio.sleep(1)
-            print("epstein")
+        ib = SingleInboundClient(id="wwww", flow="", email="uwu", subId="uwu")
+        #up = ClientUpdatePayload(id="swdawdwa", email="dwavwafa")
+        uwu = InboundClients(id=7, settings=ClientsSettings(clients=[ib]))
+        print(uwu.model_dump_json(exclude_none=True, by_alias=True))
+        await client.clients_end.update_single_client(
+            7, "9999", email="Pomenyalos", security="", password="",
+            flow="", limit_ip=20, limit_gb=20, expiry_time=17777777777,
+            enable=True, sub_id="uwu", comment="Сработает ли?")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
