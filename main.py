@@ -4,6 +4,7 @@ import logging
 import dotenv
 import os
 
+import python_3xui
 from python_3xui.api import XUIClient
 from python_3xui.models import SingleInboundClient, InboundClients, ClientsSettings
 
@@ -27,6 +28,7 @@ data = {
     "password": XUI_PASSWORD
 }
 
+
 # a = requests.post(f"{base_url}/login/", data=data)
 #
 # print(a.status_code)
@@ -35,21 +37,23 @@ data = {
 
 #b = requests.get(f"{base_url}/panel/api/inbounds/list", cookies=cookies)
 
-
 async def main():
     async with XUIClient(BASE_URL, PORT, BASE_PATH,
                          username=XUI_USERNAME,
                          password=XUI_PASSWORD,
                          two_fac_code=TWOFA_CODE,
-                         custom_prod_string="test3") as client:
+                         custom_prod_string="test3",
+                         panel_id="RUS-2") as client:
         ib = SingleInboundClient(id="wwww", flow="", email="uwu", subId="uwu")
-        #up = ClientUpdatePayload(id="swdawdwa", email="dwavwafa")
         uwu = InboundClients(id=7, settings=ClientsSettings(clients=[ib]))
+        inbs = await client.inbounds_end.get_all()
+        for i in inbs:
+            print(i.model_dump())
         print(uwu.model_dump_json(exclude_none=True, by_alias=True))
-        await client.clients_end.update_single_client(
-            7, "9999", email="Pomenyalos", security="", password="",
-            flow="", limit_ip=20, limit_gb=20, expiry_time=17777777777,
-            enable=True, sub_id="uwu", comment="Сработает ли?")
+        # await client.clients_end.update_single_client(
+        #     7, "9999", email="Pomenyalos", security="", password="",
+        #     flow="", limit_ip=20, limit_gb=20, expiry_time=17777777777,
+        #     enable=True, sub_id="uwu", comment="Сработает ли?")
 
 
 if __name__ == "__main__":
