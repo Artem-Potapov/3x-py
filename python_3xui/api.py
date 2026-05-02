@@ -76,6 +76,7 @@ class XUIClient:
                  custom_prod_string: str = "testing",
                  max_retries: int = 5, retry_delay=1,
                  custom_sub_generator: Callable[[int], str] | Callable[[int], Awaitable[str]] = util.default_sub_from_tgid,
+                 panel_id: Any = None
                  ) -> None:
         """Initialize the XUIClient.
 
@@ -93,6 +94,7 @@ class XUIClient:
             retry_delay: Seconds to wait between database-lock retries.
             custom_sub_generator: Sync or async callable that receives a
                 Telegram ID and returns the subscription ID for new clients.
+            panel_id: this is solely for user's purposes to increase logging and accounting clarity. Default is None.
         """
         self.connected: bool = False
         self.PROD_STRING = re.compile(custom_prod_string)
@@ -110,6 +112,7 @@ class XUIClient:
         self.max_retries: int = max_retries
         self.retry_delay: int = retry_delay
         self.sub_gen = custom_sub_generator
+        self.panel_id: int | str | Any = panel_id
         # endpoints
         self.server_end = endpoints.Server(self)
         self.clients_end = endpoints.Clients(self)
@@ -198,7 +201,7 @@ class XUIClient:
                 if resp.status_code == 404:
                     now: float = datetime.now(UTC).timestamp()
                     if self.session_start is None or now - self.session_start > self.session_duration:
-                        logging.info("Client with IP/Domain %s is not logged in, logging in...", self.base_host)
+                        logging.info("Client (panel: %s) is not logged in, logging in...", self.panel_id or self.base_host)
                         await self.login()
                         continue
                     else:
@@ -322,7 +325,7 @@ class XUIClient:
             if self.two_fac_secret:
                 payload["twoFactorCode"] = self.two_fac_secret.get_secret_value()
 
-        logging.info("Client is logging in with IP/Domain: %s", self.base_host)
+        logging.info("Client is logging in (panel: %s)", self.panel_id or self.base_host)
         resp = await self.session.post("/login", data=payload)
         if resp.status_code == 200:
             resp_json = resp.json()
@@ -343,7 +346,7 @@ class XUIClient:
         Returns:
             Self: The XUIClient instance.
         """
-        logging.log(DEBUG, "Client connected with IP/domain %s", self.base_url)
+        logging.log(DEBUG, "Client connected (panel: %s)", self.panel_id or self.base_url)
         self.session = AsyncClient(base_url=self.base_url)
         self.connected = True
         return self
@@ -373,9 +376,10 @@ class XUIClient:
         """
         self.connect()
         await self.login()
-        self._cache_cleaner_task = asyncio.create_task(
-            self._clear_prod_inbound_cache_task(), name=f"inb_cache_clearer_for_{self.base_url}"
-        )
+        if not self._cache_cleaner_task:
+            self._cache_cleaner_task = asyncio.create_task(
+                self._clear_prod_inbound_cache_task(create_new=True), name=f"inb_cache_clearer_for_{self.base_url}"
+            )
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
@@ -390,12 +394,12 @@ class XUIClient:
             exc_tb: The exception traceback, if an exception occurred.
         """
         if exc_type is None or exc_type is asyncio.exceptions.CancelledError:
-            logging.info("Client is disconnecting at time with IP/Domain %s", self.base_host)
+            logging.info("Client is disconnecting (panel: %s)", self.panel_id or self.base_host)
         else:
             logging.warning("Client is disconnecting due to an error (may be unrelated):"
                             "\n%s, with value %s\nStacktrace:%s",
                             exc_type, exc_val, exc_tb, exc_info=exc_tb)
-        print(f"Client is disconnecting: {self.base_host}")
+        print(f"Client is disconnecting: {self.panel_id or self.base_host}")
         await self.disconnect()
         return
 
@@ -424,16 +428,20 @@ class XUIClient:
 
         return tuple(usable_inbounds)
 
-    async def _clear_prod_inbound_cache_task(self):
+    async def _clear_prod_inbound_cache_task(self, *, create_new: bool = False):
         """Refresh the production inbound cache in the background.
 
         The async context manager starts this loop after login. Each cycle
         clears the cached production inbound list, repopulates it from the
         panel, and then waits before refreshing again.
+
+        create_new param is kw-only and for people who know what they're doing, so they won't get the warning.
         """
-        if self._cache_cleaner_task is not None:
+        if (self._cache_cleaner_task is not None) and (not create_new):
             logging.warning("You're trying to create another cache cleaner task, which is a FaF (Fire-And-Forget)."
                             "Please destroy the previous task and set _cache_cleaner_task to None, if you know what you're doing.")
+            return
+        logging.info("Initializing cache cleaner task for %s", self.panel_id)
         while self.connected:
             self.get_production_inbounds.cache_clear()
             await self.get_production_inbounds()  # fill the cache
@@ -525,7 +533,8 @@ class XUIClient:
                 raise custom_exceptions.ClientEmailAlreadyExistsError(json_resp["msg"])
         return responses
 
-    async def _find_client_in_inbound(self, client_uuid: str, inbound_id: int, use_cache=False) -> SingleInboundClient | None:
+    async def _find_client_in_inbound(self, client_uuid: str, inbound_id: int,
+                                      use_cache=False) -> SingleInboundClient | None:
         """Note:
             Cached production inbounds can be stale because the panel may be
             changed by another actor. If a cached production inbound misses the
@@ -642,6 +651,7 @@ class XUIClient:
                                           enable: bool | None = None,
                                           sub_id: str | None = None,
                                           comment: str | None = None,
+                                          email: str | None = None,
                                           verbose: bool = True) -> Response:
         """
         Update a client in a specific inbound by Telegram ID. NOT optimized for multiple inbounds.
@@ -658,6 +668,7 @@ class XUIClient:
             enable: Whether the client is enabled (optional)
             sub_id: Subscription ID (optional)
             comment: Client comment/note (optional)
+            email: New client email (optional). USE WITH CAUTION BECAUSE THE PANEL WILL NOT TRACK THE NEW EMAIL.
 
         Returns:
             Response from the API
@@ -674,6 +685,7 @@ class XUIClient:
             inbound_id=inbound_id, client_uuid=util.get_uuid_from_tgid(telegram_id),
             security=security,
             password=password,
+            email=email,
             flow=flow,
             limit_ip=limit_ip,
             limit_gb=limit_gb,

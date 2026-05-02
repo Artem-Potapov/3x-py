@@ -63,7 +63,7 @@ class SingleInboundClient(base_model.BaseModel):
     reset: int = 0
     #Interestingly, the API expects this value to be called GB but it's actually bytes.
     # I want the pythonic side to be in GB (hence why floats, i.e. 2.5GB), but the API expects bytes.
-    limit_gb: Annotated[int | float, Field(alias="totalGB")] = 0  # total flow
+    limit_gb: Annotated[int, Field(alias="totalGB")] = 0  # total flow
     expiry_time: Annotated[timestamp_seconds, Field(alias="expiryTime")] = 0
     enable: bool = True
     tg_id: Annotated[Union[int, str], Field(alias="tgId")] = ""
@@ -88,15 +88,15 @@ class SingleInboundClient(base_model.BaseModel):
 
     @field_serializer("limit_gb")
     @classmethod
-    def serialize_total_gb(cls, value: int | float) -> int:
+    def serialize_total_gb(cls, value: int) -> int:
         #API expects an integer of bytes.
         return value * (1024 ** 3)
 
     @field_validator("limit_gb", mode="after")
     @classmethod
-    def parse_total_gb(cls, value: int) -> int | float:
+    def parse_total_gb(cls, value: int) -> int:
         #Python wants an int/float of GB.
-        return value / (1024 ** 3)
+        return value // (1024 ** 3)
 
 
 class ClientsSettings(base_model.BaseModel):
@@ -295,7 +295,7 @@ class Inbound(base_model.BaseModel):
     def parse_settings(cls, value: str) -> ClientsSettings:
         if value == "":
             return ClientsSettings(clients=[])
-        return ClientsSettings.model_validate_json(value, by_alias=True, extra="forbid")
+        return ClientsSettings.model_validate_json(value, by_alias=True, extra="ignore")
 
     @field_serializer("settings")
     @classmethod
