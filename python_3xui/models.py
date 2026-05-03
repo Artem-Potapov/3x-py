@@ -57,11 +57,12 @@ class SingleInboundClient(base_model.BaseModel):
     uuid: Annotated[str, Field(alias="id")]  #yes they really did that...
     security: str = ""
     password: str = ""
-    flow: Literal["", "xtls-rprx-vision", "xtls-rprx-vision-udp443"]
+    # turns out panel can (not return it)
+    flow: Literal["", "xtls-rprx-vision", "xtls-rprx-vision-udp443"] = ""
     email: str
     limit_ip: Annotated[int, Field(alias="limitIp")] = 20
     reset: int = 0
-    #Interestingly, the API expects this value to be called GB but it's actually bytes.
+    # Interestingly, the API expects this value to be called GB but it's actually bytes.
     # I want the pythonic side to be in GB (hence why floats, i.e. 2.5GB), but the API expects bytes.
     limit_gb: Annotated[int, Field(alias="totalGB")] = 0  # total flow
     expiry_time: Annotated[timestamp_seconds, Field(alias="expiryTime")] = 0

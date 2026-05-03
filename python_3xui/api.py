@@ -64,7 +64,8 @@ class XUIClient:
         totp: TOTP generator used for repeated logins when a secret is provided.
         max_retries: Maximum number of retry attempts for failed requests.
         retry_delay: Delay in seconds between retries.
-        sub_gen: Callable used to derive subscription IDs from Telegram IDs.
+        sub_gen: Callable/Awaitable used to derive subscription IDs from Telegram IDs.
+        uuid_gen: Callable/Awaitable used to derive UUIDs from Telegram IDs.
         server_end: Server endpoint handler.
         clients_end: Clients endpoint handler.
         inbounds_end: Inbounds endpoint handler.
@@ -76,6 +77,7 @@ class XUIClient:
                  custom_prod_string: str = "testing",
                  max_retries: int = 5, retry_delay=1,
                  custom_sub_generator: Callable[[int], str] | Callable[[int], Awaitable[str]] = util.default_sub_from_tgid,
+                 custom_uuid_generator: Callable[[int], str] | Callable[[int], Awaitable[str]] = util.get_uuid_from_tgid,
                  panel_id: Any = None
                  ) -> None:
         """Initialize the XUIClient.
@@ -94,6 +96,8 @@ class XUIClient:
             retry_delay: Seconds to wait between database-lock retries.
             custom_sub_generator: Sync or async callable that receives a
                 Telegram ID and returns the subscription ID for new clients.
+            custom_uuid_generator: Sync or async callable that receives a
+                Telegram ID and returns the UUID for new clients.
             panel_id: this is solely for user's purposes to increase logging and accounting clarity. Default is None.
         """
         self.connected: bool = False
@@ -112,6 +116,7 @@ class XUIClient:
         self.max_retries: int = max_retries
         self.retry_delay: int = retry_delay
         self.sub_gen = custom_sub_generator
+        self.uuid_gen = custom_uuid_generator
         self.panel_id: int | str | Any = panel_id
         # endpoints
         self.server_end = endpoints.Server(self)
@@ -403,6 +408,25 @@ class XUIClient:
         await self.disconnect()
         return
 
+    #=========================="meta" methods==========================
+    async def _resolve_uuid(self, telegram_id: int) -> str:
+        """Resolve a Telegram ID to a UUID via ``self.uuid_gen``.
+
+        Handles both sync and async callables.
+        """
+        if iscoroutinefunction(self.uuid_gen):
+            return await self.uuid_gen(telegram_id)
+        return self.uuid_gen(telegram_id)
+
+    async def _resolve_sub(self, telegram_id: int) -> str:
+        """Resolve the subscription ID from a telegram id via ``self.sub_gen``
+
+        Handles both sync and async callables.
+        """
+        if iscoroutinefunction(self.sub_gen):
+            return await self.sub_gen(telegram_id)
+        return self.sub_gen(telegram_id)
+
     #========================inbound management========================
     async def _get_production_inbounds_impl(self) -> tuple[Inbound, ...]:
         """Retrieve production inbounds.
@@ -470,7 +494,7 @@ class XUIClient:
             email = util.generate_email_from_tgid_inbid(tgid, inbound_id)
             resp = [await self.clients_end.get_client_with_email(email)]
             return resp
-        uuid = util.get_uuid_from_tgid(tgid)
+        uuid = await self._resolve_uuid(tgid)
         resp = await self.clients_end.get_client_with_uuid(uuid)
         return resp
 
@@ -506,14 +530,12 @@ class XUIClient:
 
         tasks = []
         custom_sub: str
-        if iscoroutinefunction(self.sub_gen):
-            custom_sub = await self.sub_gen(telegram_id)
-        else:
-            custom_sub = self.sub_gen(telegram_id)
+        custom_sub = await self._resolve_sub(telegram_id)
+        uuid = await self._resolve_uuid(telegram_id)
         for inb in production_inbounds:
             tmp_email = util.generate_email_from_tgid_inbid(telegram_id, inb.id)
             client = SingleInboundClient(
-                uuid=util.get_uuid_from_tgid(telegram_id),
+                uuid=uuid,
                 flow="",
                 email=tmp_email,
                 limit_gb=0,
@@ -624,18 +646,19 @@ class XUIClient:
                                 expiry_time)
 
         _to_exec: list[Task] = []
+        client_uuid = await self._resolve_uuid(telegram_id)
         if prod_only:
             self.get_production_inbounds.cache_clear()
             inbounds = await self.get_production_inbounds()
         else:
             inbounds = await self.inbounds_end.get_all()
         for inbound in inbounds:
-            found_client = util.get_inbound_in_client(util.get_uuid_from_tgid(telegram_id), inbound)
+            found_client = util.get_inbound_in_client(client_uuid, inbound)
             if found_client:
                 new_client = found_client.model_copy(update=updates, deep=True)
                 _to_exec.append(
                     asyncio.create_task(self.clients_end.request_update_client(
-                        new_client, inbound.id, original_uuid=util.get_uuid_from_tgid(telegram_id)
+                        new_client, inbound.id, original_uuid=client_uuid
                     ))
                 )
         responses = await asyncio.gather(*_to_exec)
@@ -681,8 +704,9 @@ class XUIClient:
                                 "If you want to disable this message, set verbose=false.",
                                 expiry_time)
 
+        client_uuid = await self._resolve_uuid(telegram_id)
         resp = await self.clients_end.update_single_client(
-            inbound_id=inbound_id, client_uuid=util.get_uuid_from_tgid(telegram_id),
+            inbound_id=inbound_id, client_uuid=client_uuid,
             security=security,
             password=password,
             email=email,

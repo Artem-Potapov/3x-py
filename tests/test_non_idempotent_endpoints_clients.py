@@ -6,7 +6,7 @@ from pydantic import ValidationError
 
 from python_3xui.api import XUIClient
 from python_3xui.models import SingleInboundClient, ClientStats
-from python_3xui.util import get_uuid_from_tgid, datetime_now_ms, generate_email_from_tgid_inbid
+from python_3xui.util import datetime_now_ms, generate_email_from_tgid_inbid
 
 
 class TestClientsEndpoint:
@@ -54,10 +54,11 @@ class TestClientsEndpoint:
 
         # Generate unique test data
         timestamp = datetime_now_ms(UTC)
-        test_uuid = get_uuid_from_tgid(TestClientsEndpoint.test_telegram_id)
+        test_uuid = await xui_client._resolve_uuid(TestClientsEndpoint.test_telegram_id)
         test_email = f"testclient_{timestamp}@example.com"
 
         # Create a test client
+        custom_sub = await xui_client._resolve_sub(TestClientsEndpoint.test_telegram_id)
         test_client = SingleInboundClient.model_construct(
             id=test_uuid,  # Using alias 'id' for 'uuid'
             security="",
@@ -69,7 +70,7 @@ class TestClientsEndpoint:
             expiryTime=timestamp + 86400*1000,  # Using alias 'expiryTime' for 'expiry_time'
             enable=True,
             tgId="",  # Using alias 'tgId' for 'tg_id'
-            subId=xui_client.sub_gen(TestClientsEndpoint.test_telegram_id),  # Using alias 'subId' for 'subscription_id'
+            subId=custom_sub,  # Using alias 'subId' for 'subscription_id'
             comment=f"Test client created at {timestamp}, TEST SUITE",
             created_at=timestamp,
             updated_at=timestamp
@@ -150,7 +151,7 @@ class TestClientsEndpoint:
 
         # Generate new test data
         timestamp = datetime_now_ms(UTC)
-        test_uuid = get_uuid_from_tgid(TestClientsEndpoint.test_telegram_id + 1)  # Different UUID
+        test_uuid = await xui_client._resolve_uuid(TestClientsEndpoint.test_telegram_id + 1)  # Different UUID
         test_email = f"testclient_uuid_{timestamp}@example.com"
 
         # Create a new test client
@@ -202,7 +203,7 @@ class TestClientsEndpoint:
         TEST_TELEGRAM_ID = 420
 
         timestamp = datetime_now_ms(UTC)
-        test_uuid = get_uuid_from_tgid(TEST_TELEGRAM_ID)
+        test_uuid = await xui_client._resolve_uuid(TEST_TELEGRAM_ID)
 
         template_client = SingleInboundClient.model_construct(
             id=test_uuid,  # Using alias 'id' for 'uuid'

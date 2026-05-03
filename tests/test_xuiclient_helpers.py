@@ -19,7 +19,7 @@ from python_3xui.custom_exceptions import ClientEmailAlreadyExistsError
 from python_3xui.models import ClientStats
 from python_3xui.util import (
     generate_email_from_tgid_inbid,
-    get_uuid_from_tgid,
+
 )
 
 
@@ -101,7 +101,7 @@ class TestXUIClientHelpers:
             # inbound_id=None -> uses UUID, returns one entry per production inbound.
             by_uuid = await xui_client.get_client_with_tgid(_TGID_GET)
             assert isinstance(by_uuid, list)
-            expected_uuid = get_uuid_from_tgid(_TGID_GET)
+            expected_uuid = await xui_client._resolve_uuid(_TGID_GET)
             assert all(isinstance(c, ClientStats) for c in by_uuid)
             assert all(c.uuid == expected_uuid for c in by_uuid)
             prod_ids = {inb.id for inb in production_inbounds}
