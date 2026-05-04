@@ -1,4 +1,3 @@
-
 class ClientEmailAlreadyExistsError(Exception):
     """Raised when the panel rejects a new client because its email exists."""
 
@@ -8,6 +7,7 @@ class ClientEmailAlreadyExistsError(Exception):
         else:
             super().__init__(*args)
 
+
 class EmailNotExistsError(Exception):
     """Raised when a requested client email cannot be found on the panel."""
 
@@ -16,6 +16,7 @@ class EmailNotExistsError(Exception):
             super().__init__(args[0])
         else:
             super().__init__(*args)
+
 
 class ClientDoesNotExistError(Exception):
     """Raised when a requested client UUID is absent from the target inbound."""
