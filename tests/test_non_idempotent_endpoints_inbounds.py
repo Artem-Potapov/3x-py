@@ -24,6 +24,7 @@ class TestInboundsEndpoint:
 
         # Create minimal inbound configuration
         # Based on 3x-ui API, we need minimal required fields
+        # noinspection PyTypeChecker
         test_inbound = Inbound(
             id=0,  # Will be assigned by server
             up=0,
@@ -68,7 +69,7 @@ class TestInboundsEndpoint:
         # Validate response
         assert response.status_code == 200
         response_json = response.json()
-        assert response_json["success"] == True
+        assert response_json["success"] is True
         assert "Inbound" in response_json["msg"] and "created" in response_json["msg"].lower()
 
         # Store the created inbound ID for deletion test
@@ -83,7 +84,7 @@ class TestInboundsEndpoint:
         # Validate the created inbound
         assert test_inbounds[0].port == test_port
         assert test_inbounds[0].protocol == test_inbound.protocol
-        assert test_inbounds[0].enable == True
+        assert test_inbounds[0].enable is True
 
     @pytest.mark.asyncio
     @pytest.mark.dependency(depends=["test_create_inbound"], name="test_delete_inbound")
@@ -108,7 +109,7 @@ class TestInboundsEndpoint:
         # Validate response
         assert response.status_code == 200
         response_json = response.json()
-        assert response_json["success"] == True
+        assert response_json["success"] is True
 
         # Verify deletion by trying to get the deleted inbound
         all_inbounds = await xui_client.inbounds_end.get_all()

@@ -15,13 +15,11 @@ import pytest
 from pydantic import ValidationError
 
 from python_3xui.api import XUIClient
-from python_3xui.custom_exceptions import ClientEmailAlreadyExistsError
+from python_3xui.custom_exceptions import ClientEmailAlreadyExistsError, ClientDoesNotExistError
 from python_3xui.models import ClientStats
 from python_3xui.util import (
     generate_email_from_tgid_inbid,
-
 )
-
 
 # Distinct Telegram IDs per test, kept well clear of the IDs used in
 # test_non_idempotent_endpoints_clients.py (999_888_777, 420).
@@ -46,11 +44,13 @@ class TestXUIClientHelpers:
             responses = await xui_client.create_and_add_prod_client(
                 _TGID_CREATE, additional_remark="helpers-suite-create"
             )
+            assert isinstance(responses, dict), f"Expected dict, got {type(responses)}"
             assert len(responses) == len(production_inbounds)
-            for resp in responses:
+            for inb_id, resp in responses.items():
+                assert isinstance(inb_id, int), f"Expected int key, got {type(inb_id)}"
                 assert resp.status_code == 200
                 body = resp.json()
-                assert body["success"] is True, f"Add failed: {body}"
+                assert body["success"] is True, f"Add failed for inbound {inb_id}: {body}"
 
             # Each per-inbound email must now resolve.
             for inbound in production_inbounds:
@@ -171,7 +171,7 @@ class TestXUIClientHelpers:
             assert "Client deleted successfully" in body["msg"]
 
             # Target inbound entry must be gone (3X-UI returns null obj -> ValidationError).
-            with pytest.raises(ValidationError):
+            with pytest.raises(ClientDoesNotExistError):
                 await xui_client.clients_end.get_client_with_email(target_email)
 
             # Other production inbounds must be untouched.

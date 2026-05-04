@@ -63,4 +63,3 @@ async def xui_client() -> XUIClient:
         await client.disconnect()
     except Exception:
         raise
-

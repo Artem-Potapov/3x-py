@@ -5,6 +5,7 @@ import pytest
 from pydantic import ValidationError
 
 from python_3xui.api import XUIClient
+from python_3xui.custom_exceptions import ClientDoesNotExistError
 from python_3xui.models import SingleInboundClient, ClientStats
 from python_3xui.util import datetime_now_ms, generate_email_from_tgid_inbid
 
@@ -82,7 +83,7 @@ class TestClientsEndpoint:
         # Validate response
         assert response.status_code == 200
         response_json = response.json()
-        assert response_json["success"] == True
+        assert response_json["success"] is True
         assert "Inbound client(s) have been added" in response_json["msg"]
 
         # Store created client data for deletion tests
@@ -127,16 +128,14 @@ class TestClientsEndpoint:
         # Validate response
         assert response.status_code == 200
         response_json = response.json()
-        assert response_json["success"] == True
+        assert response_json["success"] is True
         assert "Client deleted successfully" in response_json["msg"]
 
-        try:
+        with pytest.raises(ClientDoesNotExistError):
             await xui_client.clients_end.get_client_with_email(email)
-            #if there's no error meaning the client still exists, fail the test
-            await asyncio.sleep(1)  # Wait a moment
-            pytest.fail("The client still exists after deletion attempt")
-        except ValidationError:
-            print(f"Successfully deleted test client by email: {email}")
+        #if there's no error meaning the client still exists, fail the test
+        await asyncio.sleep(1)  # Wait a moment
+        print(f"Successfully deleted test client by email: {email}")
 
         # Only clear email, keep UUID for next test
         TestClientsEndpoint.created_client_email = None
@@ -183,7 +182,7 @@ class TestClientsEndpoint:
         # Validate response
         assert response.status_code == 200
         response_json = response.json()
-        assert response_json["success"] == True
+        assert response_json["success"] is True
         assert "Inbound client has been deleted." in response_json["msg"]
 
         print(f"The API said it deleted the client: {test_uuid}")
@@ -239,7 +238,7 @@ class TestClientsEndpoint:
         for response in responses:
             assert response.status_code == 200
             response_json = response.json()
-            assert response_json["success"] == True
+            assert response_json["success"] is True
             assert "Client deleted successfully" in response_json["msg"]
 
         print(f"Successfully deleted test client by Telegram ID from {len(responses)} production inbounds")
@@ -250,7 +249,7 @@ class TestClientsEndpoint:
         for inbound_id, email in emails_by_inbound.items():
             try:
                 await xui_client.clients_end.get_client_with_email(email)
-            except ValidationError:
+            except ClientDoesNotExistError:
                 continue
             pytest.fail(
                 f"Client with email {email} still exists in inbound {inbound_id} after revoke"
