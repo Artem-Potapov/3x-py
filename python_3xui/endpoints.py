@@ -1,16 +1,16 @@
+from __future__ import annotations
+
 import json
-import logging
 from datetime import datetime, UTC
-from typing import Generic, Literal, List, Dict, TypeVar, TYPE_CHECKING
+from typing import Generic, Literal, Dict, TypeVar, TYPE_CHECKING
 
 from httpx import Response
 from pydantic import ValidationError, BaseModel
 
-import pydantic
+from .custom_exceptions import ClientDoesNotExistError
 
 if TYPE_CHECKING:
-    from .api import XUIClient
-from .custom_exceptions import ClientDoesNotExistError
+    from python_3xui.api_core import SessionCore
 from .models import Inbound, SingleInboundClient, ClientStats, InboundClients, timestamp_seconds, ClientsSettings
 from .util import JsonType
 
@@ -24,12 +24,12 @@ class BaseEndpoint(Generic[ModelT]):
 
     Attributes:
         _url: The base URL path for this endpoint group.
-        client: Reference to the XUIClient instance.
+        _core: Reference to the SessionCore instance.
     """
     _url: str
 
-    def __init__(self, client: "XUIClient") -> None:
-        self.client = client
+    def __init__(self, core: SessionCore) -> None:
+        self._core = core
 
     async def _simple_get(self, caller_endpoint: str) -> JsonType:
         """Perform a simple GET request and return the response object.
@@ -47,7 +47,7 @@ class BaseEndpoint(Generic[ModelT]):
         endpoint_url: str = caller_endpoint
         if self._url not in caller_endpoint:
             endpoint_url = f"{self._url}{caller_endpoint}"
-        resp = await self.client.safe_get(endpoint_url)
+        resp = await self._core.safe_get(endpoint_url)
         if resp.status_code == 200:
             resp_json = resp.json()
             return resp_json["obj"]
@@ -167,7 +167,7 @@ class Clients(BaseEndpoint):
 
     #although it's the same url, they should be differentiated
 
-    async def get_client_with_email(self, email: str) -> ClientStats:
+    async def get_client_with_email(self, email: str, *, raise_if_none=True) -> ClientStats|None:
         """Retrieve client statistics by email.
 
         Args:
@@ -178,6 +178,10 @@ class Clients(BaseEndpoint):
         """
         endpoint = f"/getClientTraffics/{email}"
         resp = await self._simple_get(endpoint)
+        if resp is None:
+            if raise_if_none:
+                raise ClientDoesNotExistError(f"Client with email {email} does not exist!")
+            return None
         return ClientStats.model_validate(resp)
 
     async def get_client_with_uuid(self, uuid: str) -> list[ClientStats]:
@@ -221,14 +225,14 @@ class Clients(BaseEndpoint):
                 # Check the SingleInboundClient now...
                 tmp = SingleInboundClient.model_validate(client)
                 if inbound_id:
-                    final = InboundClients(id=inbound_id,
+                    final = InboundClients(parent_id=inbound_id,
                                            settings=ClientsSettings(clients=[tmp]))
                 else:
                     raise ValueError("A single client was provided to be added but no parent inbound id")
         elif isinstance(client, SingleInboundClient):
             if not inbound_id:
                 raise ValueError("A single client was provided to be added but no parent inbound id")
-            final = InboundClients(id=inbound_id,
+            final = InboundClients(parent_id=inbound_id,
                                    settings=ClientsSettings(clients=[client]))
         elif isinstance(client, InboundClients):
             final = client
@@ -238,7 +242,7 @@ class Clients(BaseEndpoint):
             raise TypeError
         # send request
         data = json.loads(final.model_dump_json(by_alias=True))
-        resp = await self.client.safe_post(f"{self._url}{endpoint}", json=data)
+        resp = await self._core.safe_post(f"{self._url}{endpoint}", json=data)
         #YOU NEED TO PASS SETTINGS AS A STRING, NOT AS A DICT, YOU IDIOT!
         return resp
 
@@ -260,14 +264,14 @@ class Clients(BaseEndpoint):
             The HTTP response from the API.
         """
         if isinstance(client, SingleInboundClient):
-            client = InboundClients(id=inbound_id, settings=ClientsSettings(clients=[client]))
+            client = InboundClients(parent_id=inbound_id, settings=ClientsSettings(clients=[client]))
         _endpoint = f"/updateClient/{original_uuid}"
         # we have to do this because if we do model.dump() it will return a Settings **OBJECT** which we DON'T want.
-        resp = await self.client.safe_post(f"{self._url}{_endpoint}",
-                                           json=json.loads(client.model_dump_json(exclude_none=True, by_alias=True)))
+        resp = await self._core.safe_post(f"{self._url}{_endpoint}",
+                                          json=json.loads(client.model_dump_json(exclude_none=True, by_alias=True)))
         return resp
 
-    async def update_single_client(self, inbound_id: int, client_uuid: str, *,
+    async def update_single_client(self, inbound_id: int, found_client: SingleInboundClient, *,
                                    security: str | None = None,
                                    password: str | None = None,
                                    flow: Literal["", "xtls-rprx-vision", "xtls-rprx-vision-udp443"] | None = None,
@@ -279,11 +283,15 @@ class Clients(BaseEndpoint):
                                    sub_id: str | None = None,
                                    comment: str | None = None,
                                    ) -> Response:
-        """Update an existing client's details.
+        """Update an existing client.
+
+        Caller must pass the current client model fetched from the panel.
+        The previous implementation reached into ``XUIClient._find_client_in_inbound``;
+        that lookup now lives in ``TgidClientService``.
 
         Args:
             inbound_id: The ID of the inbound the client belongs to.
-            client_uuid: The UUID of the original client.
+            found_client: Existing client row as returned under the inbound.
             security: New security settings (optional).
             password: New password (optional).
             flow: New flow settings (optional).
@@ -300,19 +308,17 @@ class Clients(BaseEndpoint):
         """
         # Collect only the arguments that were explicitly provided (not None)
         changes = {k: v for k, v in locals().items()
-                   if k not in ("self", "inbound_id", "client_uuid", "changes") and v is not None}
+                   if k not in ("self", "inbound_id", "found_client", "changes") and v is not None}
         # Rename sub_id to subscription_id if needed
         if 'sub_id' in changes:
             changes['subscription_id'] = changes.pop('sub_id')
 
-        found_inbound = await self.client._find_client_in_inbound(client_uuid, inbound_id)
-        if not found_inbound:
-            raise ClientDoesNotExistError(f"The target inbound was checked but client {client_uuid} was not found.")
-
         changes["updated_at"] = int(datetime.now(UTC).timestamp())
-        #TODO: see if model_copy actually does validation
-        updated = found_inbound.model_copy(update=changes)
-        resp = await self.request_update_client(updated, inbound_id, original_uuid=client_uuid)
+        # TODO: see if model_copy actually does validation
+        updated = found_client.model_copy(update=changes)
+        resp = await self.request_update_client(
+            updated, inbound_id, original_uuid=found_client.uuid
+        )
         return resp
 
     async def delete_expired_clients(self, inbound_id: int) -> Response:
@@ -325,7 +331,7 @@ class Clients(BaseEndpoint):
             The HTTP response from the API.
         """
         _endpoint = f"/delDepletedClients/"
-        resp = await self.client.safe_post(f"{self._url}{_endpoint}{inbound_id}")
+        resp = await self._core.safe_post(f"{self._url}{_endpoint}{inbound_id}")
         return resp
 
     async def delete_client_by_email(self, email: str, inbound_id: int) -> Response:
@@ -339,7 +345,7 @@ class Clients(BaseEndpoint):
             The HTTP response from the API.
         """
         _endpoint = f"/{inbound_id}/delClientByEmail/{email}"
-        resp = await self.client.safe_post(f"{self._url}{_endpoint}")
+        resp = await self._core.safe_post(f"{self._url}{_endpoint}")
         return resp
 
     async def delete_client_by_uuid(self, uuid: str, inbound_id: int) -> Response:
@@ -353,5 +359,5 @@ class Clients(BaseEndpoint):
             The HTTP response from the API.
         """
         _endpoint = f"/{inbound_id}/delClient/{uuid}"
-        resp = await self.client.safe_post(f"{self._url}{_endpoint}")
+        resp = await self._core.safe_post(f"{self._url}{_endpoint}")
         return resp

@@ -10,7 +10,6 @@ including:
 """
 from __future__ import annotations
 
-import asyncio
 import base64
 import logging
 import random
@@ -48,7 +47,7 @@ def camel_to_snake(name: str) -> str:
     return re.sub(_RE_CAMEL_TO_SNAKE2, r"\1_\2", name).lower()
 
 
-async def async_range(start: int, stop: int|None=None, step: int=1):
+async def async_range(start: int, stop: int | None = None, step: int = 1):
     """Async generator that yields values from a range.
 
     This is an async version of the built-in range() function that yields
@@ -97,7 +96,8 @@ def default_sub_from_tgid(telegram_id: int) -> str:
     return base64_from_string(str(telegram_id))
 
 
-ensure_2_digits = lambda x: str(x) if x >= 10 else f"0{x}"
+def ensure_2_digits(x: int):
+    return str(x) if x >= 10 else f"0{x}"
 
 
 def get_uuid_from_tgid(telegram_id: int, fixed: bool = True) -> str:
@@ -144,6 +144,7 @@ def random_string(length: int) -> str:
     ])
     return s
 
+
 def generate_random_email(length: int = 8) -> str:
     """Generate a random alphanumeric email identifier.
 
@@ -159,7 +160,7 @@ def generate_random_email(length: int = 8) -> str:
     return random_string(length)
 
 
-def get_inbound_in_client(client_uuid: str, inbound: Inbound) -> SingleInboundClient|None:
+def get_inbound_in_client(client_uuid: str, inbound: Inbound) -> SingleInboundClient | None:
     """Find a client inside an inbound by UUID.
 
     Args:
@@ -239,7 +240,7 @@ async def check_xui_response(response: dict | httpx.Response) -> str:
         json_resp = response.json()
     else:
         json_resp = response
-    
+
     if len(json_resp) == 3:
         if tuple(json_resp.keys()) == ("success", "msg", "obj"):
             success: bool = json_resp["success"]
@@ -251,6 +252,7 @@ async def check_xui_response(response: dict | httpx.Response) -> str:
                 return "DB_LOCKED"
             return "FAIL"
     raise RuntimeError("Validator got something very unexpected (Please don't shove responses with non-20X status codes in here...)")
+
 
 def get_days_until_expiry(expiry_time: int) -> float:
     """Calculate the number of days until a client expires.
@@ -293,13 +295,16 @@ class DBLockedError(Exception):
         """
         super().__init__(message)
 
-def s_to_ms_timestamp(s: int|float) -> int:
+
+def s_to_ms_timestamp(s: int | float) -> int:
     """Convert a UNIX timestamp in seconds to milliseconds."""
     return int(s * 1000)
 
-def ms_to_s_timestamp(ms: int|float) -> int:
+
+def ms_to_s_timestamp(ms: int | float) -> int:
     """Convert a UNIX timestamp in milliseconds to seconds."""
     return ms // 1000
+
 
 def auto_s_to_ms_timestamp(s_or_ms: int) -> int:
     """Automatically convert a UNIX timestamp to milliseconds if it's in seconds."""
@@ -307,12 +312,14 @@ def auto_s_to_ms_timestamp(s_or_ms: int) -> int:
         return s_to_ms_timestamp(s_or_ms)
     return s_or_ms
 
+
 def auto_ms_to_s_timestamp(ms_or_s: int) -> int:
     """Automatically convert a UNIX timestamp to seconds if it's in milliseconds."""
     if ms_or_s > 1e12:  # If the timestamp is greater than 1 trillion, it's likely in milliseconds
         return ms_to_s_timestamp(ms_or_s)
     return ms_or_s
 
-def datetime_now_ms(tzinfo: tzinfo|None=UTC) -> int:
+
+def datetime_now_ms(tzinfo: tzinfo | None = UTC) -> int:
     """Get the current time as a UNIX timestamp in milliseconds."""
-    return int(datetime.now(tzinfo).timestamp() * 1000) 
+    return int(datetime.now(tzinfo).timestamp() * 1000)
