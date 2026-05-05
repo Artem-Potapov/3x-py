@@ -160,7 +160,7 @@ def generate_random_email(length: int = 8) -> str:
     return random_string(length)
 
 
-def get_inbound_in_client(client_uuid: str, inbound: Inbound) -> SingleInboundClient | None:
+def get_client_in_inbound(client_uuid: str, inbound: Inbound) -> SingleInboundClient | None:
     """Find a client inside an inbound by UUID.
 
     Args:
