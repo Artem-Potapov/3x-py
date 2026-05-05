@@ -4,7 +4,7 @@ from .api import XUIClient
 import python_3xui.custom_exceptions as exceptions
 
 __author__ = "JustMe_001"
-__version__ = "0.0.10"
+__version__ = "0.0.11"
 __email__ = ""
 
 

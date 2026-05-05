@@ -13,7 +13,7 @@ from httpx import Response
 from python_3xui import util
 from python_3xui.custom_exceptions import ClientDoesNotExistError, ClientEmailAlreadyExistsError
 from python_3xui.models import ClientStats, Inbound, SingleInboundClient
-from python_3xui.util import get_inbound_in_client
+from python_3xui.util import get_client_in_inbound
 
 if TYPE_CHECKING:
     from python_3xui.endpoints import Clients, Inbounds
@@ -38,6 +38,7 @@ class TgIDClientService:
         self._prod_cache = prod_cache
 
     async def get_client_with_tgid(self, tgid: int, inbound_id: int | None = None) -> list[ClientStats]:
+        #FIXME: Implement the fallback described in the docstring (api.py)
         if inbound_id:
             email = util.generate_email_from_tgid_inbid(tgid, inbound_id)
             return [await self._clients.get_client_with_email(email)]
@@ -106,13 +107,29 @@ class TgIDClientService:
 
             if _update_exec:
                 update_results: list[Response] = await asyncio.gather(*_update_exec)
+                _search_update_exec: list[Task] = []
+                _search_update_resp: dict[int, Task] = {}
                 for i, inb_id in enumerate(update_inbound_ids):
-                    responses[inb_id] = update_results[i]
+                    _resp = update_results[i]
+                    _msg: str = _resp.json()["msg"]
+                    if "empty client id" in _msg.lower():
+                        t = asyncio.create_task(
+                            self._resolve_update_client(telegram_id, inb_id, clients_by_inbound[inb_id])
+                        )
+                        _search_update_exec.append(t)
+                        _search_update_resp[inb_id] = t
+                    else:
+                        responses[inb_id] = _resp
+
+                if _search_update_exec:
+                    await asyncio.gather(*_search_update_exec)
+                    for inb_id, task in _search_update_resp.items():
+                        responses[inb_id] = task.result()
 
         # --- Phase 3: raise on remaining duplicates if not exist_ok ---
         if not exist_ok:
             for inb_id, resp in responses.items():
-                json_resp = resp.json()
+                json_resp: dict = resp.json()
                 msg = json_resp.get("msg", "")
                 if "duplicate email" in msg.lower():
                     logging.error(
@@ -123,13 +140,22 @@ class TgIDClientService:
 
         return responses
 
+    async def _resolve_update_client(self, telegram_id: int, inb_id: int,
+                                     inbound_client: SingleInboundClient) -> Response:
+        _found = await self._clients.get_client_with_email(
+            util.generate_email_from_tgid_inbid(telegram_id, inb_id)
+        )
+        return await self._clients.request_update_client(
+            inbound_client, inb_id, original_uuid=_found.uuid,
+        )
+
     async def _find_client_in_inbound(self,
                                       client_uuid: str,
                                       inbound_id: int,
                                       *,
-                                      use_cache: bool = False,
+                                      use_prod_cache: bool = False,
                                       ) -> SingleInboundClient | None:
-        if use_cache:
+        if use_prod_cache:
             prod_inbs = await self._prod_cache.get()
             prod_inb_index = None
             for i, prod_inb in enumerate(prod_inbs):
@@ -138,11 +164,11 @@ class TgIDClientService:
 
             if prod_inb_index is not None:
                 needed_inb: Inbound = prod_inbs[prod_inb_index]
-                result = get_inbound_in_client(client_uuid, needed_inb)
+                result = get_client_in_inbound(client_uuid, needed_inb)
                 if result is None:
                     self._prod_cache.get.cache_clear()
                     new_inb = (await self._prod_cache.get())[prod_inb_index]
-                    return get_inbound_in_client(client_uuid, new_inb)
+                    return get_client_in_inbound(client_uuid, new_inb)
 
         inb = await self._inbounds.get_specific_inbound(inbound_id)
         for client in inb.settings.clients:
@@ -200,11 +226,14 @@ class TgIDClientService:
         else:
             inbounds = await self._inbounds.get_all()
         for inbound in inbounds:
-            found_client = util.get_inbound_in_client(client_uuid, inbound)
+            found_client = util.get_client_in_inbound(client_uuid, inbound)
             if not found_client:
                 if force_search_by_email:
-                    _email = util.generate_email_from_tgid_inbid(telegram_id, inbound.id)
-                    found_client = await self._clients.get_client_with_email(_email, raise_if_none=False)
+                    _email_to_search = util.generate_email_from_tgid_inbid(telegram_id, inbound.id)
+                    found_traffics = await self._clients.get_client_with_email(_email_to_search, raise_if_none=False)
+                    if found_traffics:
+                        resp = await self._inbounds.get_specific_inbound(inbound.id)
+                        found_client = util.get_client_in_inbound(found_traffics.uuid, resp)
                 # this double-check is better than 2 branches doing the same thing
                 if not found_client:
                     if not_found_action == "ignore":
@@ -252,17 +281,20 @@ class TgIDClientService:
                 )
 
         client_uuid = await self._identity.resolve_uuid(telegram_id)
-        found = await self._find_client_in_inbound(client_uuid, inbound_id)
+        found = await self._find_client_in_inbound(client_uuid, inbound_id, use_prod_cache=True)
         if not found:
             if force_resolve_by_email:
-                _email = util.generate_email_from_tgid_inbid(telegram_id, inbound_id)
-                resp = await self._clients.get_client_with_email(email, raise_if_none=False)
+                _email_to_search = util.generate_email_from_tgid_inbid(telegram_id, inbound_id)
+                resp = await self._clients.get_client_with_email(_email_to_search, raise_if_none=False)
                 if resp is None:
-                    raise ClientDoesNotExistError(f"The target inbound was force-checked by email but client {_email} was not found.")
+                    raise ClientDoesNotExistError(f"The target inbound was force-checked by email but client {_email_to_search} was not found.")
                 client_uuid = resp.uuid
-            raise ClientDoesNotExistError(
-                f"The target inbound was checked but client {client_uuid} was not found."
-            )
+                found_inbound_id = resp.inboundId
+                found = await self._find_client_in_inbound(client_uuid, found_inbound_id, use_prod_cache=True)
+            else:
+                raise ClientDoesNotExistError(
+                    f"The target inbound was checked but client {client_uuid} was not found."
+                )
         return await self._clients.update_single_client(
             inbound_id=inbound_id,
             found_client=found,
@@ -278,8 +310,8 @@ class TgIDClientService:
             comment=comment,
         )
 
-    async def delete_client_by_tgid(self, telegram_id: int, inbound_id: int) -> Response:
-        email = util.generate_email_from_tgid_inbid(telegram_id, inbound_id)
+    async def delete_client_by_tgid(self, telegram_id: int, inbound_id: int, *, suffix: str = "") -> Response:
+        email = util.generate_email_from_tgid_inbid(telegram_id, inbound_id) + suffix
         return await self._clients.delete_client_by_email(email, inbound_id)
 
     async def revoke_client_by_tgid_all_inbounds(self, telegram_id: int) -> List[Response]:

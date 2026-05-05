@@ -43,6 +43,7 @@ class ProductionInboundCache:
         inbounds = await self._inbounds.get_all()
         usable: list[Inbound] = [inb for inb in inbounds if self.PROD_STRING.search(inb.remark)]
         if not usable:
+            # Note: this is meant to fail if the prod_string is not found.
             raise RuntimeError("No production inbounds found! Change prod_string!")
         return tuple(usable)
 

@@ -144,13 +144,14 @@ class SessionCore:
                 json_payload = None
         else:
             json_payload = None
-        logging.info(
-            "Safe %s is running to %s%s\nJSON Payload: %s",
-            method,
-            str(self.session.base_url),
-            str(url),
-            json.dumps(json_payload) if json_payload is not None else "(no payload)",
-        )
+        if __debug__:
+            logging.info(
+                "Safe %s is running to %s%s\nJSON Payload: %s",
+                method,
+                str(self.session.base_url),
+                str(url),
+                json.dumps(json_payload) if json_payload is not None else "(no payload)",
+            )
         async for attempt in async_range(self.max_retries):
             if "request_to_send" in kwargs:
                 _request: Request = kwargs["request_to_send"]

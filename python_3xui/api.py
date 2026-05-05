@@ -9,7 +9,7 @@ from pydantic import SecretStr
 
 from . import endpoints
 from . import util
-from .models import ClientStats
+from .models import ClientStats, Inbound
 from .api_core import ProductionInboundCache, SessionCore, TgIDClientService, IdentityResolver
 from .api_core.session_core import (
     CookieType,
@@ -50,7 +50,7 @@ class XUIClient:
                  *, username: str | None = None, password: str | None = None,
                  two_fac_code: str | None = None, session_duration: int = 3600,
                  custom_prod_string: str = "testing",
-                 max_retries: int = 5, retry_delay=1,
+                 max_retries: int = 5, retry_delay: int = 1,
                  custom_sub_generator: Callable[[int], str] | Callable[[int], Awaitable[str]] = util.default_sub_from_tgid,
                  custom_uuid_generator: Callable[[int], str] | Callable[[int], Awaitable[str]] = util.get_uuid_from_tgid,
                  panel_id: Any = None
@@ -313,7 +313,7 @@ class XUIClient:
             logging.warning("Client is disconnecting due to an error (may be unrelated):"
                             "\n%s, with value %s\nStacktrace:%s",
                             exc_type, exc_val, exc_tb, exc_info=exc_tb)
-        print(f"Client is disconnecting: {self.panel_id or self.base_host}")
+        logging.info("Client is disconnecting: %s", self.panel_id or self.base_host)
         await self.disconnect()
         return
 
@@ -331,6 +331,15 @@ class XUIClient:
         Handles both sync and async callables.
         """
         return await self._identity.resolve_sub(telegram_id)
+
+    #========================inbound management========================
+    async def add_inbound(self, inbound: Inbound) -> Response:
+        """Create a new inbound. Returns the panel HTTP response."""
+        return await self.inbounds_end.add_inbound(inbound)
+
+    async def delete_inbound(self, inbound_id: int) -> Response:
+        """Delete an inbound by panel ID. Returns the panel HTTP response."""
+        return await self.inbounds_end.delete_inbound_by_id(inbound_id)
 
     #========================clients management========================
     async def get_client_with_tgid(self, tgid: int, inbound_id: int | None = None) -> list[ClientStats]:
@@ -461,7 +470,8 @@ class XUIClient:
                                           sub_id: str | None = None,
                                           comment: str | None = None,
                                           email: str | None = None,
-                                          verbose: bool = True) -> Response:
+                                          verbose: bool = True,
+                                          force_resolve_by_email: bool = False) -> Response:
         """
         Update a client in a specific inbound by Telegram ID. NOT optimized for multiple inbounds.
 
@@ -477,8 +487,9 @@ class XUIClient:
             enable: Whether the client is enabled (optional)
             sub_id: Subscription ID (optional)
             comment: Client comment/note (optional)
-            email: New client email (optional). USE WITH CAUTION BECAUSE THE PANEL WILL NOT TRACK THE NEW EMAIL.
-
+            email: New client email (optional). USE WITH CAUTION BECAUSE THE XUIClient WILL NOT TRACK THE NEW EMAIL.
+            verbose: Enables guardrails.
+            force_resolve_by_email: Whether to enable fetch-thru-email fallback when a client is not found, uses ~3 extra fetches but provides an extra layer of protection.
         Returns:
             Response from the API
         """
@@ -496,19 +507,22 @@ class XUIClient:
             comment=comment,
             email=email,
             verbose=verbose,
+            force_resolve_by_email=force_resolve_by_email,
         )
 
-    async def delete_client_by_tgid(self, telegram_id: int, inbound_id: int) -> Response:
+    async def delete_client_by_tgid(self, telegram_id: int, inbound_id: int, *, suffix: str = "") -> Response:
         """Delete a client from a specific inbound by Telegram ID.
 
         Args:
             telegram_id: The Telegram ID of the client
             inbound_id: The ID of the inbound
+            suffix: Appended to the generated email before deletion (use when the
+                target client was created with a custom email suffix).
 
         Returns:
             Response from the API
         """
-        return await self._tg_client_service.delete_client_by_tgid(telegram_id, inbound_id)
+        return await self._tg_client_service.delete_client_by_tgid(telegram_id, inbound_id, suffix=suffix)
 
     async def revoke_client_by_tgid_all_inbounds(self, telegram_id: int) -> List[Response]:
         """Delete a client from all production inbounds by Telegram ID.

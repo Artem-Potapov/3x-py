@@ -116,11 +116,13 @@ class Server(BaseEndpoint):
 class Inbounds(BaseEndpoint):
     """Handler for inbound-related API endpoints.
 
-    Provides methods for retrieving inbound configurations.
+    Provides methods for retrieving, creating, and deleting inbound configurations.
 
     Endpoints:
         - /panel/api/inbounds/list
         - /panel/api/inbounds/get/{id}
+        - /panel/api/inbounds/add
+        - /panel/api/inbounds/del/{inboundId}
     """
     _url = "panel/api/inbounds"
 
