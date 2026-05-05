@@ -1,13 +1,13 @@
 [project]
 name = "Python-3xui"
-version = "0.0.10"
+version = "0.0.12"
 authors = [
   { name="JustMe_001", email="justme001.causation755@passinbox.com" },
 ]
 description = "3x-ui wrapper for python"
 readme = "README.md"
 
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
@@ -22,7 +22,7 @@ license-files = ["LICEN[CS]E*"]
 dependencies = [
     "pydantic ~= 2.12.5, < 3",
     "httpx ~=0.28.1",
-    "dotenv ~= 0.9.9",
+    "python-dotenv==1.2.2",
     "async_lru ~= 2.3.0",
     "pyotp ~= 2.9.0"
 ]
@@ -46,7 +46,8 @@ build-backend = "hatchling.build"
 include = [
     "python_3xui/*.py",
     "/tests/*.py",
-    "/tests/pytest.ini"
+    "/tests/pytest.ini",
+    "python_3xui/api_core/*.py"
 ]
 exclude = [
     "requirements.txt",

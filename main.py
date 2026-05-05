@@ -4,7 +4,6 @@ import logging
 import dotenv
 import os
 
-import python_3xui
 from python_3xui.api import XUIClient
 from python_3xui.models import SingleInboundClient, InboundClients, ClientsSettings
 
@@ -21,6 +20,8 @@ BASE_PATH = os.getenv("BASE_PATH")
 XUI_USERNAME = os.getenv("XUI_USERNAME")
 XUI_PASSWORD = os.getenv("XUI_PASSWORD")
 TWOFA_CODE = os.getenv("XUI_2FA_SECRET")
+
+assert None not in [BASE_URL, PORT, BASE_PATH, XUI_USERNAME, XUI_PASSWORD, TWOFA_CODE], "Missing environment variables"
 
 base_url = f"https://{BASE_URL}:{PORT}/{BASE_PATH}"
 data = {
@@ -44,8 +45,8 @@ async def main():
                          two_fac_code=TWOFA_CODE,
                          custom_prod_string="test3",
                          panel_id="RUS-2") as client:
-        ib = SingleInboundClient(id="wwww", flow="", email="uwu", subId="uwu")
-        uwu = InboundClients(id=7, settings=ClientsSettings(clients=[ib]))
+        ib = SingleInboundClient(uuid="wwww", flow="", email="uwu", subscription_id="uwu")
+        uwu = InboundClients(parent_id=7, settings=ClientsSettings(clients=[ib]))
         inbs = await client.inbounds_end.get_all()
         for i in inbs:
             print(i.model_dump())
