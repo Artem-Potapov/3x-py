@@ -60,8 +60,8 @@ class APIResponseGatherer:
             return False
 
     def get_endpoint(self, endpoint: str, method: str = "GET",
-                     params: dict = None, json_data: dict = None,
-                     data: dict = None) -> dict | None:
+                     params: dict | None = None, json_data: dict | None = None,
+                     data: dict | None = None) -> dict | None:
         """
         Make a request to an API endpoint and return the JSON response.
 
