@@ -149,6 +149,36 @@ class Inbounds(BaseEndpoint):
         inbound = Inbound(**json)
         return inbound
 
+    async def add_inbound(self, inbound: Inbound) -> Response:
+        """Create a new inbound on the panel.
+
+        Args:
+            inbound: Full inbound configuration. ``id`` and ``clientStats`` are
+                omitted from the JSON body (assigned by the server).
+
+        Returns:
+            The raw HTTP response from the API.
+        """
+        payload = json.loads(
+            inbound.model_dump_json(
+                by_alias=True,
+                exclude_none=True,
+                exclude={"id", "clientStats"},
+            )
+        )
+        return await self._core.safe_post(f"{self._url}/add", json=payload)
+
+    async def delete_inbound_by_id(self, inbound_id: int) -> Response:
+        """Delete an inbound by its panel ID.
+
+        Args:
+            inbound_id: The inbound identifier.
+
+        Returns:
+            The raw HTTP response from the API.
+        """
+        return await self._core.safe_post(f"{self._url}/del/{inbound_id}")
+
 
 class Clients(BaseEndpoint):
     """Handler for client-related API endpoints.
